@@ -1,0 +1,342 @@
+/* ------------------------------------------------------------------
+   Company Remote Access — theme
+   Dark theme by default; `.light` overrides specific tokens.
+   ------------------------------------------------------------------ */
+
+.root {
+    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -fx-font-size: 13px;
+    -fx-background-color: -bg;
+    -fx-text-fill: -text;
+}
+
+/* dark palette (default) */
+.root {
+    -bg: #0d1117;
+    -surface: #161b22;
+    -surface-2: #1c2430;
+    -surface-3: #232c3a;
+    -border: rgba(255, 255, 255, 0.08);
+    -text: #e6edf3;
+    -text-dim: #8b98a5;
+    -accent: #3b82f6;
+    -accent-hover: #5a95f7;
+    -ok: #22c55e;
+    -warn: #f59e0b;
+    -err: #ef4444;
+    -ok-soft: rgba(34, 197, 94, 0.14);
+    -warn-soft: rgba(245, 158, 11, 0.14);
+    -err-soft: rgba(239, 68, 68, 0.14);
+    -accent-soft: rgba(59, 130, 246, 0.16);
+    -shadow: rgba(0, 0, 0, 0.35);
+}
+
+.root.light {
+    -bg: #f4f6f9;
+    -surface: #ffffff;
+    -surface-2: #eef1f6;
+    -surface-3: #e3e8f0;
+    -border: rgba(15, 23, 42, 0.10);
+    -text: #111827;
+    -text-dim: #5b6572;
+    -accent: #2563eb;
+    -accent-hover: #1d4ed8;
+    -ok: #16a34a;
+    -warn: #d97706;
+    -err: #dc2626;
+    -ok-soft: rgba(22, 163, 74, 0.12);
+    -warn-soft: rgba(217, 119, 6, 0.12);
+    -err-soft: rgba(220, 38, 38, 0.12);
+    -accent-soft: rgba(37, 99, 235, 0.12);
+    -shadow: rgba(15, 23, 42, 0.12);
+}
+
+/* ---------------- app chrome ---------------- */
+
+.app-title {
+    -fx-font-size: 17px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text;
+}
+
+.app-subtitle {
+    -fx-font-size: 11px;
+    -fx-text-fill: -text-dim;
+}
+
+.header-bar {
+    -fx-background-color: -surface;
+    -fx-border-color: transparent transparent -border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 12 20 12 20;
+}
+
+.footer-bar {
+    -fx-background-color: -surface;
+    -fx-border-color: -border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 8 20 8 20;
+    -fx-text-fill: -text-dim;
+    -fx-font-size: 11px;
+}
+
+/* ---------------- cards ---------------- */
+
+.card {
+    -fx-background-color: -surface;
+    -fx-background-radius: 14;
+    -fx-border-color: -border;
+    -fx-border-radius: 14;
+    -fx-effect: dropshadow(gaussian, -shadow, 18, 0.15, 0, 6);
+    -fx-padding: 18;
+}
+
+.card-flat {
+    -fx-background-color: -surface-2;
+    -fx-background-radius: 12;
+    -fx-padding: 14;
+}
+
+.card-title {
+    -fx-font-size: 12px;
+    -fx-text-fill: -text-dim;
+    -fx-font-weight: bold;
+}
+
+.card-value {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text;
+}
+
+.card-small {
+    -fx-font-size: 11px;
+    -fx-text-fill: -text-dim;
+}
+
+/* ---------------- status pill / LED ---------------- */
+
+.led {
+    -fx-fill: -text-dim;
+}
+
+.led-ok {
+    -fx-fill: -ok;
+}
+
+.led-warn {
+    -fx-fill: -warn;
+}
+
+.led-err {
+    -fx-fill: -err;
+}
+
+.pill {
+    -fx-background-radius: 999;
+    -fx-padding: 4 12 4 12;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.pill-ok {
+    -fx-background-color: -ok-soft;
+    -fx-text-fill: -ok;
+}
+
+.pill-warn {
+    -fx-background-color: -warn-soft;
+    -fx-text-fill: -warn;
+}
+
+.pill-err {
+    -fx-background-color: -err-soft;
+    -fx-text-fill: -err;
+}
+
+.pill-neutral {
+    -fx-background-color: -surface-3;
+    -fx-text-fill: -text-dim;
+}
+
+.pill-accent {
+    -fx-background-color: -accent-soft;
+    -fx-text-fill: -accent;
+}
+
+/* ---------------- state ring (client dashboard) ---------------- */
+
+.state-ring {
+    -fx-stroke: -surface-3;
+    -fx-stroke-width: 10;
+    -fx-fill: transparent;
+}
+
+.state-ring-progress {
+    -fx-stroke-line-cap: round;
+}
+
+.state-label {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text;
+}
+
+.state-sub {
+    -fx-font-size: 12px;
+    -fx-text-fill: -text-dim;
+}
+
+/* ---------------- buttons ---------------- */
+
+.button {
+    -fx-background-radius: 10;
+    -fx-padding: 10 26 10 26;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-background-insets: 0;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+}
+
+.button-primary {
+    -fx-background-color: -accent;
+    -fx-text-fill: white;
+    -fx-border-color: transparent;
+    -fx-effect: dropshadow(gaussian, rgba(59, 130, 246, 0.35), 14, 0.25, 0, 4);
+}
+
+.button-primary:hover {
+    -fx-background-color: -accent-hover;
+}
+
+.button-secondary {
+    -fx-background-color: -surface-3;
+    -fx-text-fill: -text;
+    -fx-border-color: -border;
+}
+
+.button-secondary:hover {
+    -fx-background-color: derive(-surface-3, 10%);
+}
+
+.button-ghost {
+    -fx-background-color: transparent;
+    -fx-text-fill: -text-dim;
+    -fx-border-color: transparent;
+}
+
+.button-ghost:hover {
+    -fx-text-fill: -text;
+}
+
+.button-danger {
+    -fx-background-color: -err-soft;
+    -fx-text-fill: -err;
+    -fx-border-color: transparent;
+}
+
+.button-danger:hover {
+    -fx-background-color: derive(-err-soft, 8%);
+}
+
+.button-success {
+    -fx-background-color: -ok;
+    -fx-text-fill: white;
+    -fx-border-color: transparent;
+}
+
+.button-success:hover {
+    -fx-background-color: derive(-ok, -8%);
+}
+
+/* ---------------- forms ---------------- */
+
+.text-field, .combo-box, .text-area, .password-field {
+    -fx-background-color: -surface-2;
+    -fx-border-color: -border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-padding: 8 12 8 12;
+    -fx-text-fill: -text;
+    -fx-font-size: 13px;
+}
+
+.text-field:focused, .combo-box:focused, .text-area:focused, .password-field:focused {
+    -fx-border-color: -accent;
+}
+
+.check-box .box {
+    -fx-background-color: -surface-2;
+    -fx-border-color: -border;
+    -fx-border-radius: 4;
+}
+
+.check-box:selected .mark {
+    -fx-background-color: -accent;
+}
+
+.form-label {
+    -fx-font-size: 12px;
+    -fx-text-fill: -text-dim;
+    -fx-font-weight: bold;
+}
+
+.form-hint {
+    -fx-font-size: 11px;
+    -fx-text-fill: -text-dim;
+}
+
+/* ---------------- tables / lists ---------------- */
+
+.list-view, .table-view {
+    -fx-background-color: -surface-2;
+    -fx-background-radius: 10;
+    -fx-border-color: -border;
+    -fx-border-radius: 10;
+}
+
+.list-cell, .table-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -text;
+    -fx-padding: 8 10 8 10;
+}
+
+.list-cell:odd {
+    -fx-background-color: derive(-surface-2, -3%);
+}
+
+/* ---------------- misc ---------------- */
+
+.separator .line {
+    -fx-border-color: -border;
+}
+
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+
+.log-view {
+    -fx-font-family: "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -text-dim;
+    -fx-background-color: -surface-2;
+}
+
+.tab-pane .tab-header-background {
+    -fx-background-color: -surface;
+}
+
+.tab {
+    -fx-background-color: transparent;
+}
+
+.tab:selected .tab-label {
+    -fx-text-fill: -accent;
+}
