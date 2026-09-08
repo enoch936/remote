@@ -84,33 +84,70 @@ public final class ConfigManager {
         }
     }
 
+    /**
+     * Persist the configuration crash-safely. The file body and its integrity
+     * sidecar are both staged and fsynced to temporary files first, a copy of the
+     * previous file is kept as {@code .bak}, and only then are the staged files
+     * atomically renamed into place (config first, sidecar second). A crash in the
+     * middle never leaves a half-written file or a config without its sidecar.
+     */
     public synchronized void save(AppConfig config) throws IOException {
         if (file == null) {
             throw new IOException("no configuration file path");
         }
-        Files.createDirectories(file.toAbsolutePath().getParent());
+        Path dir = file.toAbsolutePath().getParent();
+        Files.createDirectories(dir);
         String yaml = Yaml.serialize(config.asMap());
-        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        if (encryptionKey != null) {
-            Files.writeString(tmp, ConfigCipher.encrypt(encryptionKey, yaml.getBytes(StandardCharsets.UTF_8)),
-                    StandardCharsets.UTF_8);
-        } else {
-            Files.writeString(tmp, yaml, StandardCharsets.UTF_8);
+
+        byte[] body = encryptionKey != null
+                ? ConfigCipher.encrypt(encryptionKey, yaml.getBytes(StandardCharsets.UTF_8))
+                        .getBytes(StandardCharsets.UTF_8)
+                : yaml.getBytes(StandardCharsets.UTF_8);
+        Path tmpBody = dir.resolve(file.getFileName() + ".tmp");
+        writeDurable(tmpBody, body);
+
+        boolean plaintextWithIntegrity = integrityKey != null && encryptionKey == null;
+        byte[] sidecarBytes = null;
+        Path macFile = null;
+        Path tmpSidecar = null;
+        if (plaintextWithIntegrity) {
+            macFile = ConfigIntegrity.sidecarFor(file);
+            sidecarBytes = (ConfigIntegrity.hmac(integrityKey, yaml.getBytes(StandardCharsets.UTF_8))
+                    + System.lineSeparator()).getBytes(StandardCharsets.UTF_8);
+            tmpSidecar = macFile.resolveSibling(macFile.getFileName() + ".tmp");
+            writeDurable(tmpSidecar, sidecarBytes);
         }
+
         if (Files.exists(file)) {
-            Path backup = file.resolveSibling(file.getFileName() + ".bak");
-            Files.move(file, backup, StandardCopyOption.REPLACE_EXISTING);
+            Path backup = dir.resolve(file.getFileName() + ".bak");
+            Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.COPY_ATTRIBUTES);
         }
-        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+
+        // GCM provides authenticity, so any (plaintext-era) sidecar must be gone
+        // before the new body lands; never let a stale MAC then shadow load.
         if (encryptionKey != null) {
-            // GCM provides authenticity; the HMAC sidecar is superseded.
             Files.deleteIfExists(ConfigIntegrity.sidecarFor(file));
-        } else {
-            writeIntegrity(yaml);
+        }
+        Files.move(tmpBody, file,
+                StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        if (plaintextWithIntegrity) {
+            Files.move(tmpSidecar, macFile,
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         }
         AppLogger.getLogger().info(LogCategory.SYSTEM, "configuration saved (%s mode, %s)",
                 config.mode() == Role.SERVER ? "server" : "client",
                 encryptionKey != null ? "encrypted" : "plaintext");
+    }
+
+    private static void writeDurable(Path target, byte[] data) throws IOException {
+        try (var ch = java.nio.channels.FileChannel.open(target,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.WRITE,
+                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+            ch.write(java.nio.ByteBuffer.wrap(data));
+            ch.force(true);
+        }
     }
 
     /** Decrypt encrypted files; legacy plaintext passes through (checked by the sidecar). */
@@ -160,16 +197,5 @@ public final class ConfigManager {
                     "configuration was modified since it was saved; restore " + file.getFileName()
                             + " from its backup or reset the configuration");
         }
-    }
-
-    private void writeIntegrity(String yaml) throws IOException {
-        if (integrityKey == null) {
-            return;
-        }
-        String mac = ConfigIntegrity.hmac(integrityKey, yaml.getBytes(StandardCharsets.UTF_8));
-        Path macFile = ConfigIntegrity.sidecarFor(file);
-        Path tmp = macFile.resolveSibling(macFile.getFileName() + ".tmp");
-        Files.writeString(tmp, mac + System.lineSeparator(), StandardCharsets.UTF_8);
-        Files.move(tmp, macFile, StandardCopyOption.REPLACE_EXISTING);
     }
 }

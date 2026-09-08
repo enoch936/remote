@@ -3,6 +3,7 @@ package com.company.remoteaccess.core.configuration;
 import com.company.remoteaccess.security.ConfigCipher;
 import com.company.remoteaccess.security.ConfigIntegrity;
 import com.company.remoteaccess.security.CredentialStore;
+import com.company.remoteaccess.util.Yaml;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -40,7 +41,9 @@ class ConfigManagerEncryptionTest {
 
         String onDisk = Files.readString(file, StandardCharsets.UTF_8);
         assertTrue(ConfigCipher.isEncrypted(onDisk));
-        assertFalse(onDisk.contains("HQ"));
+        // the whole serialized plaintext body must never appear in the ciphertext
+        // (a bare "HQ" was flaky: random base64 can coincidentally contain it)
+        assertFalse(onDisk.contains(Yaml.serialize(serverCfg("HQ").asMap())));
         assertFalse(Files.exists(ConfigIntegrity.sidecarFor(file)));
 
         assertEquals("HQ", encryptedManager(file).load().serverName());

@@ -55,6 +55,9 @@ public final class MainApp extends Application {
     private AuditLog auditLog;
 
     private volatile boolean serverStarted;
+    private final java.util.concurrent.atomic.AtomicBoolean dependencyInstallInProgress =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile boolean dependencyInstallCancelled;
 
     @Override
     public void start(Stage stage) {
@@ -156,6 +159,10 @@ public final class MainApp extends Application {
      */
     public void resetToFirstRun() {
         try {
+            if (gatewayService != null) {
+                gatewayService.close();
+            }
+            dependencyInstallCancelled = true;
             wipeState();
             ctx.reloadConfig();
             configureServices(ctx.config());
@@ -230,8 +237,7 @@ public final class MainApp extends Application {
             TunnelTester tester = new TunnelTester(new TunnelTester.OsPing(ctx.runner), ctx.network);
             if (clientService == null) {
                 clientService = new ClientService(ctx.configSupplier(), ctx.configManager,
-                        ctx.credentials, vpn, ctx.network,
-                        vpn == null ? null : vpn.routing(), tester);
+                        ctx.credentials, vpn, ctx.network, vpn.routing(), tester);
                 reconnect = new ReconnectManager(clientService, ctx.configSupplier());
                 reconnect.start();
             }
@@ -247,8 +253,7 @@ public final class MainApp extends Application {
     }
 
     private VpnStatus statusSupplier() {
-        VpnManager vpn = ctx.vpn();
-        return vpn == null ? VpnStatus.down("company0") : vpn.status();
+        return ctx.vpn().status();
     }
 
     private void startBackgroundServices() {
@@ -396,9 +401,15 @@ public final class MainApp extends Application {
     /**
      * Install missing dependencies (WireGuard). Relaunches elevated with
      * {@code --fix-requirements} when necessary; an already-elevated instance
-     * runs the install directly.
+     * runs the install directly. Single-flight: a second request while an
+     * install is already queued or running is coalesced.
      */
     public void installDependencies() {
+        if (dependencyInstallInProgress.get()) {
+            AppLogger.getLogger().info(LogCategory.SYSTEM,
+                    "dependency install already in progress; coalescing duplicate request");
+            return;
+        }
         if (!Elevation.isElevated()) {
             Elevation.clearStartedMarker();
             if (Elevation.relaunchElevated(java.util.List.of("--fix-requirements"))) {
@@ -447,8 +458,17 @@ public final class MainApp extends Application {
         t.start();
     }
 
-    /** Install missing tooling, re-check, and restart the gateway when it now works. */
+    /**
+     * Install missing tooling once (single-flight), refresh dependency state,
+     * then trigger exactly one gateway rebootstrap when WireGuard is now usable.
+     * The gateway is rebound to the freshly assembled engine before the reboot.
+     */
     private void applyDependencyFix() {
+        if (!dependencyInstallInProgress.compareAndSet(false, true)) {
+            AppLogger.getLogger().info(LogCategory.SYSTEM,
+                    "dependency install already in progress; coalescing duplicate request");
+            return;
+        }
         Thread worker = new Thread(() -> {
             try {
                 var plan = DependencyInstaller.wireGuardInstallPlan(ctx.runner);
@@ -467,15 +487,29 @@ public final class MainApp extends Application {
                                 "dependency install succeeded: %s", plan.get().label());
                     } else {
                         AppLogger.getLogger().warn(LogCategory.SYSTEM,
-                                "dependency install failed (%d): %s", r.exitCode(), r.stderr());
+                                "dependency install failed (exit %d): %s",
+                                r.exitCode(), r.stderr());
                     }
                 }
             } finally {
-                if (KeyManager.findWgBinary(ctx.runner, ctx.config().wgBinaryDir()).isPresent()
-                        && gatewayService != null) {
-                    AppLogger.getLogger().info(LogCategory.SYSTEM,
-                            "WireGuard available after fix; rebooting the gateway");
-                    Platform.runLater(() -> gatewayService.rebootstrap());
+                try {
+                    if (dependencyInstallCancelled) {
+                        AppLogger.getLogger().info(LogCategory.SYSTEM,
+                                "dependency install cancelled by factory reset; skipping rebootstrap");
+                        return;
+                    }
+                    if (KeyManager.findWgBinary(ctx.runner, ctx.config().wgBinaryDir()).isPresent()
+                            && gatewayService != null) {
+                        AppLogger.getLogger().info(LogCategory.SYSTEM,
+                                "WireGuard available after fix; rebooting the gateway");
+                        ctx.rebuildVpnEngine();
+                        Platform.runLater(() -> {
+                            gatewayService.rebindVpn(ctx.vpn());
+                            gatewayService.rebootstrap();
+                        });
+                    }
+                } finally {
+                    dependencyInstallInProgress.set(false);
                 }
             }
         }, "dependency-installer");

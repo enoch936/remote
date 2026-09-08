@@ -16,8 +16,10 @@ import com.company.remoteaccess.security.CredentialStore;
 import com.company.remoteaccess.security.ConfigIntegrity;
 import com.company.remoteaccess.security.Secrets;
 import com.company.remoteaccess.vpn.KeyManager;
+import com.company.remoteaccess.vpn.VpnAdapter;
 import com.company.remoteaccess.vpn.VpnException;
 import com.company.remoteaccess.vpn.VpnManager;
+import com.company.remoteaccess.vpn.VpnStatus;
 import com.company.remoteaccess.vpn.WireGuardAdapter;
 
 import java.io.IOException;
@@ -111,35 +113,54 @@ public final class AppContext {
     // VPN assembly (lazy: requires WireGuard tooling to be installed)
     // ------------------------------------------------------------------
 
+    /**
+     * Never returns {@code null}. When the WireGuard tooling is missing or
+     * unusable the returned manager is marked unavailable ({@link
+     * VpnManager#isAvailable()} == {@code false}) and all tunnel operations
+     * throw a controlled {@link VpnException}(BINARIES_MISSING) instead of a
+     * NullPointerException.
+     */
     public synchronized VpnManager vpn() {
         if (vpnManager == null) {
-            try {
-                WireGuardAdapter adapter = WireGuardAdapter.build(runner, vpnDir,
-                        config.get().wgBinaryDir());
-                String wgBin = KeyManager.findWgBinary(runner, config.get().wgBinaryDir())
-                        .orElse("wg");
-                KeyManager keyManager = new KeyManager(runner, wgBin);
-                FirewallManager firewall = FirewallManager.forPlatform(runner,
-                        dataDir.resolve("firewall-rules.json"));
-                NatManager nat = NatManager.forPlatform(runner);
-                RoutingManager routing = RoutingManager.forPlatform(runner,
-                        dataDir.resolve("routes.json"));
-                AppLogger.getLogger().info(LogCategory.VPN,
-                        "VPN engine assembled (wg=%s)", keyManager.binary());
-                vpnManager = new VpnManager(adapter, configSupplier(), credentials,
-                        routing, firewall, nat, keyManager);
-                vpnManager.adapter().ensureAvailable();
-            } catch (VpnException e) {
-                vpnBuildError = e;
-                AppLogger.getLogger().warn(LogCategory.VPN,
-                        "VPN engine unavailable: %s", e.getMessage());
-            }
+            VpnManager assembled = assembleVpnEngine();
+            vpnManager = assembled;
         }
         return vpnManager;
     }
 
+    private VpnManager assembleVpnEngine() {
+        String wgBin = KeyManager.findWgBinary(runner, config.get().wgBinaryDir())
+                .orElse("wg");
+        FirewallManager firewall = FirewallManager.forPlatform(runner,
+                dataDir.resolve("firewall-rules.json"));
+        NatManager nat = NatManager.forPlatform(runner);
+        RoutingManager routing = RoutingManager.forPlatform(runner,
+                dataDir.resolve("routes.json"));
+        KeyManager keyManager = new KeyManager(runner, wgBin);
+
+        VpnAdapter adapter;
+        boolean available;
+        try {
+            adapter = WireGuardAdapter.build(runner, vpnDir, config.get().wgBinaryDir());
+            adapter.ensureAvailable();
+            vpnBuildError = null;
+            available = true;
+            AppLogger.getLogger().info(LogCategory.VPN,
+                    "VPN engine assembled (wg=%s)", keyManager.binary());
+        } catch (VpnException e) {
+            vpnBuildError = e;
+            adapter = new UnavailableAdapter();
+            available = false;
+            AppLogger.getLogger().warn(LogCategory.VPN,
+                    "VPN engine unavailable: %s", e.getMessage());
+        }
+        return new VpnManager(adapter, configSupplier(), credentials,
+                routing, firewall, nat, keyManager, available);
+    }
+
     public boolean vpnAvailable() {
-        return vpnManager != null;
+        VpnManager m = vpnManager;
+        return m != null && m.isAvailable();
     }
 
     public VpnException vpnBuildError() {
@@ -155,5 +176,64 @@ public final class AppContext {
     /** Re-read configuration from disk (e.g., after the setup wizard ran). */
     public void reloadConfig() {
         loadConfig();
+    }
+
+    /**
+     * VPN adapter used while WireGuard tooling is unavailable. Every operation
+     * reports a controlled {@link VpnException.Kind#BINARIES_MISSING}; status
+     * reads report the tunnel as down, so UIs and watchdogs observe a defined
+     * state instead of a missing engine.
+     */
+    private static final class UnavailableAdapter implements VpnAdapter {
+
+        @Override
+        public void ensureAvailable() throws VpnException {
+            throw missing();
+        }
+
+        @Override
+        public void writeConfig(String tunnelName, String configText) throws VpnException {
+            throw missing();
+        }
+
+        @Override
+        public void loadConfig(String tunnelName) throws VpnException {
+            throw missing();
+        }
+
+        @Override
+        public void start(String tunnelName) throws VpnException {
+            throw missing();
+        }
+
+        @Override
+        public void stop(String tunnelName) throws VpnException {
+            // nothing installed to stop
+        }
+
+        @Override
+        public void removeConfig(String tunnelName) throws VpnException {
+            // nothing installed to remove
+        }
+
+        @Override
+        public boolean isInstalled(String tunnelName) {
+            return false;
+        }
+
+        @Override
+        public boolean isRunning(String tunnelName) {
+            return false;
+        }
+
+        @Override
+        public VpnStatus status(String tunnelName) {
+            return VpnStatus.down(tunnelName);
+        }
+
+        private VpnException missing() {
+            return new VpnException(VpnException.Kind.BINARIES_MISSING,
+                    "WireGuard (wg) is not installed or not on PATH.");
+        }
     }
 }

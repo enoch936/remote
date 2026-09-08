@@ -25,7 +25,7 @@ import java.util.function.Supplier;
  * configuration generation, tunnel start/stop, route/firewall/NAT wiring and
  * health checks.
  */
-public final class VpnManager {
+public final class VpnManager implements GatewayVpn {
 
     private final VpnAdapter adapter;
     private final Supplier<AppConfig> config;
@@ -34,6 +34,7 @@ public final class VpnManager {
     private final FirewallManager firewall;
     private final NatManager nat;
     private final KeyManager keyManager;
+    private final boolean available;
 
     private volatile boolean natManaged;
 
@@ -44,6 +45,17 @@ public final class VpnManager {
                       FirewallManager firewall,
                       NatManager nat,
                       KeyManager keyManager) {
+        this(adapter, config, credentials, routing, firewall, nat, keyManager, true);
+    }
+
+    public VpnManager(VpnAdapter adapter,
+                      Supplier<AppConfig> config,
+                      CredentialStore credentials,
+                      RoutingManager routing,
+                      FirewallManager firewall,
+                      NatManager nat,
+                      KeyManager keyManager,
+                      boolean available) {
         this.adapter = adapter;
         this.config = config;
         this.credentials = credentials;
@@ -51,6 +63,7 @@ public final class VpnManager {
         this.firewall = firewall;
         this.nat = nat;
         this.keyManager = keyManager;
+        this.available = available;
     }
 
     public VpnAdapter adapter() {
@@ -59,6 +72,18 @@ public final class VpnManager {
 
     public KeyManager keyManager() {
         return keyManager;
+    }
+
+    /** Explicit engine state: the WireGuard tooling is present and verified. */
+    public boolean isAvailable() {
+        return available;
+    }
+
+    private void requireAvailable() throws VpnException {
+        if (!available) {
+            throw new VpnException(VpnException.Kind.BINARIES_MISSING,
+                    "WireGuard (wg) is not installed or not on PATH.");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -115,6 +140,7 @@ public final class VpnManager {
 
     /** Full server bring-up. Returns the resulting status. */
     public VpnStatus startGateway(List<ClientIdentity> authorizedPeers) throws VpnException {
+        requireAvailable();
         AppConfig cfg = config.get();
         String tunnel = cfg.tunnelName();
         Cidr vpnSubnet = IpHelpers.parseCidr(cfg.vpnSubnet());
@@ -132,9 +158,8 @@ public final class VpnManager {
                     cfg.persistentKeepalive());
         }
         String conf = builder.build();
-        adapter.writeConfig(tunnel, conf);
-        adapter.loadConfig(tunnel);
-        adapter.start(tunnel);
+        ensureTunnelConfigured(tunnel, conf);
+        ensureTunnelRunning(tunnel);
 
         // Firewall: allow inbound UDP on the VPN listen port only.
         try {
@@ -155,6 +180,34 @@ public final class VpnManager {
         }
 
         return adapter.status(tunnel);
+    }
+
+    /**
+     * Idempotent tunnel configuration: stage the config and install the tunnel
+     * only when it does not already exist. Repeated calls never reinstall.
+     */
+    public void ensureTunnelConfigured(String tunnelName, String conf) throws VpnException {
+        adapter.writeConfig(tunnelName, conf);
+        adapter.ensureInstalled(tunnelName);
+    }
+
+    /**
+     * Idempotent tunnel bring-up: reuse an already-running tunnel, otherwise
+     * install when missing and start it. Safe to call repeatedly.
+     */
+    public void ensureTunnelRunning(String tunnelName) throws VpnException {
+        if (adapter.isRunning(tunnelName)) {
+            AppLogger.getLogger().info(LogCategory.VPN,
+                    "tunnel %s already running; verifying state", tunnelName);
+            adapter.verifyConfig(tunnelName);
+            return;
+        }
+        if (!adapter.isInstalled(tunnelName)) {
+            AppLogger.getLogger().info(LogCategory.VPN,
+                    "tunnel %s not installed; installing", tunnelName);
+            adapter.ensureInstalled(tunnelName);
+        }
+        adapter.start(tunnelName);
     }
 
     /** Configure - then verify - NAT for full-tunnel mode. */
@@ -211,6 +264,7 @@ public final class VpnManager {
 
     public VpnStatus startClient(String serverPublicKey, String clientVpnIp,
                                  List<String> allowedIps, String dns) throws VpnException {
+        requireAvailable();
         AppConfig cfg = config.get();
         String tunnel = cfg.tunnelName();
         KeyManager.KeyPair keys = ensureClientKeys();
@@ -242,9 +296,8 @@ public final class VpnManager {
                 cfg.persistentKeepalive());
         String conf = builder.build();
 
-        adapter.writeConfig(tunnel, conf);
-        adapter.loadConfig(tunnel);
-        adapter.start(tunnel);
+        ensureTunnelConfigured(tunnel, conf);
+        ensureTunnelRunning(tunnel);
         AppLogger.getLogger().info(LogCategory.VPN,
                 "client tunnel started towards %s", endpoint);
         return adapter.status(tunnel);
@@ -252,6 +305,9 @@ public final class VpnManager {
 
     public VpnStatus stopTunnel() {
         String tunnel = config.get().tunnelName();
+        if (!available) {
+            return VpnStatus.down(tunnel);
+        }
         try {
             adapter.stop(tunnel);
         } catch (VpnException e) {
@@ -262,6 +318,11 @@ public final class VpnManager {
 
     /** Add an authorized peer to the running interface without a restart. */
     public void addPeerToRunning(String publicKey, String vpnAddress) {
+        if (!available || !adapter.isRunning(config.get().tunnelName())) {
+            AppLogger.getLogger().debug(LogCategory.SERVER,
+                    "live peer add skipped: tunnel not running or VPN unavailable");
+            return;
+        }
         try {
             adapter.ensureAvailable();
             adapter.setPeer(config.get().tunnelName(), publicKey, vpnAddress + "/32");
@@ -293,6 +354,9 @@ public final class VpnManager {
     }
 
     public VpnStatus status() {
+        if (!available) {
+            return VpnStatus.down(config.get().tunnelName());
+        }
         return adapter.status(config.get().tunnelName());
     }
 

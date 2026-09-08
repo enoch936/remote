@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -99,7 +100,65 @@ public final class WireGuardAdapter implements VpnAdapter {
         CommandResult r = runner.run(wgBinary, "version");
         if (r.failed()) {
             throw new VpnException(VpnException.Kind.BINARIES_MISSING,
-                    "wg binary is not runnable: " + r.stderr());
+                    "wg binary is not runnable (exit " + r.exitCode() + "): "
+                            + trim(r.stderr()));
+        }
+        AppLogger.getLogger().info(LogCategory.VPN, "WireGuard detected (%s)", wgBinary);
+    }
+
+    @Override
+    public boolean isInstalled(String tunnelName) {
+        if (Os.isWindows()) {
+            return wireGuardExe != null && isServicePresent(tunnelName);
+        }
+        return Files.exists(Path.of("/etc/wireguard", tunnelName + ".conf"));
+    }
+
+    @Override
+    public boolean isRunning(String tunnelName) {
+        if (Os.isWindows()) {
+            if (!isServicePresent(tunnelName)) {
+                return false;
+            }
+            CommandResult r = runner.run("sc", "query", serviceName(tunnelName));
+            return r.success() && r.stdout() != null && r.stdout().contains("RUNNING");
+        }
+        VpnStatus s = status(tunnelName);
+        return s != null && s.running();
+    }
+
+    @Override
+    public void ensureInstalled(String tunnelName) throws VpnException {
+        if (isInstalled(tunnelName)) {
+            AppLogger.getLogger().info(LogCategory.VPN,
+                    "tunnel %s already installed; reusing existing service", tunnelName);
+            return;
+        }
+        loadConfig(tunnelName);
+    }
+
+    @Override
+    public void ensureRunning(String tunnelName) throws VpnException {
+        if (isRunning(tunnelName)) {
+            AppLogger.getLogger().info(LogCategory.VPN,
+                    "tunnel %s already running; verifying state", tunnelName);
+            verifyConfig(tunnelName);
+            return;
+        }
+        if (!isInstalled(tunnelName)) {
+            ensureInstalled(tunnelName);
+        }
+        start(tunnelName);
+    }
+
+    @Override
+    public void verifyConfig(String tunnelName) throws VpnException {
+        Path conf = managedDir.resolve(tunnelName + ".conf");
+        if (Os.isWindows() && !configMatches(tunnelName, conf)) {
+            AppLogger.getLogger().warn(LogCategory.VPN,
+                    "running tunnel %s does not match the expected configuration", tunnelName);
+            throw new VpnException(VpnException.Kind.CONFIGURATION_ERROR,
+                    "tunnel " + tunnelName + " is running with a different configuration");
         }
     }
 
@@ -126,16 +185,26 @@ public final class WireGuardAdapter implements VpnAdapter {
                         "wireguard.exe is not available");
             }
             ensureElevated("install the VPN tunnel");
-            removeServiceQuietly(tunnelName);
             Path conf = managedDir.resolve(tunnelName + ".conf");
             if (!Files.exists(conf)) {
                 throw new VpnException(VpnException.Kind.CONFIGURATION_ERROR,
                         "tunnel config missing for " + tunnelName);
             }
+            if (isServicePresent(tunnelName)) {
+                if (configMatches(tunnelName, conf)) {
+                    AppLogger.getLogger().info(LogCategory.VPN,
+                            "tunnel %s already installed with matching config; reusing", tunnelName);
+                    return;
+                }
+                AppLogger.getLogger().info(LogCategory.VPN,
+                        "tunnel %s installed but configuration changed; reinstalling", tunnelName);
+                removeServiceQuietly(tunnelName);
+            }
             CommandResult r = runner.run(wireGuardExe, "/installtunnelservice", conf.toString());
             if (r.failed()) {
                 throw new VpnException(VpnException.Kind.CONFIGURATION_ERROR,
-                        "WireGuard service install failed: " + r.stderr());
+                        "WireGuard service install failed (exit " + r.exitCode() + "): "
+                                + trim(r.stderr()));
             }
             AppLogger.getLogger().info(LogCategory.VPN,
                     "WireGuard tunnel service installed: %s", tunnelName);
@@ -146,6 +215,12 @@ public final class WireGuardAdapter implements VpnAdapter {
                 Path conf = Path.of("/etc/wireguard", tunnelName + ".conf");
                 Path staged = managedDir.resolve(tunnelName + ".conf");
                 byte[] bytes = Files.readAllBytes(staged);
+                if (Files.exists(conf)
+                        && Arrays.equals(bytes, Files.readAllBytes(conf))) {
+                    AppLogger.getLogger().info(LogCategory.VPN,
+                            "tunnel %s already installed; reusing existing config", tunnelName);
+                    return;
+                }
                 Files.write(conf, bytes);
                 FilePermissions.hardenFile(conf);
                 AppLogger.getLogger().info(LogCategory.VPN,
@@ -162,10 +237,19 @@ public final class WireGuardAdapter implements VpnAdapter {
         ensureAvailable();
         if (Os.isWindows()) {
             ensureElevated("start the VPN tunnel");
+            if (isRunning(tunnelName)) {
+                AppLogger.getLogger().info(LogCategory.VPN,
+                        "tunnel %s already running; reusing existing service", tunnelName);
+                return;
+            }
+            if (!isServicePresent(tunnelName)) {
+                ensureInstalled(tunnelName);
+            }
             CommandResult r = runner.run("sc", "start", serviceName(tunnelName));
             if (r.failed()) {
                 throw new VpnException(VpnException.Kind.START_FAILED,
-                        "unable to start WireGuard service: " + r.stderr());
+                        String.format("unable to start WireGuard tunnel: service=%s exit=%d stderr=%s",
+                                serviceName(tunnelName), r.exitCode(), trim(r.stderr())));
             }
             waitForService(tunnelName, true, 30);
         } else {
@@ -231,16 +315,26 @@ public final class WireGuardAdapter implements VpnAdapter {
                 AppLogger.getLogger().info(LogCategory.VPN, "tunnel not installed; nothing to stop");
                 return;
             }
+            if (!isRunning(tunnelName)) {
+                AppLogger.getLogger().info(LogCategory.VPN, "tunnel already stopped; nothing to stop");
+                return;
+            }
             CommandResult r = runner.run("sc", "stop", serviceName(tunnelName));
             if (r.failed()) {
                 AppLogger.getLogger().warn(LogCategory.VPN,
-                        "sc stop reported: %s", r.stderr());
+                        "sc stop reported (exit %d): %s", r.exitCode(), trim(r.stderr()));
             }
             waitForService(tunnelName, false, 30);
         } else {
+            if (!tunnelAlreadyUp(listTunnels(), tunnelName)) {
+                AppLogger.getLogger().info(LogCategory.VPN,
+                        "tunnel %s not up; nothing to stop", tunnelName);
+                return;
+            }
             CommandResult r = runner.run(wgQuick, "down", tunnelName);
             if (r.failed() && r.stderr() != null && !r.stderr().contains("not exist")) {
-                AppLogger.getLogger().warn(LogCategory.VPN, "wg-quick down: %s", r.stderr());
+                AppLogger.getLogger().warn(LogCategory.VPN,
+                        "wg-quick down (exit %d): %s", r.exitCode(), trim(r.stderr()));
             }
         }
         AppLogger.getLogger().info(LogCategory.VPN, "tunnel stopped: %s", tunnelName);
@@ -372,6 +466,72 @@ public final class WireGuardAdapter implements VpnAdapter {
         return "WireGuardTunnel$" + tunnelName;
     }
 
+    /**
+     * Compare the staged configuration against the installed tunnel: public key
+     * (derived from the expected private key) and, when fixed, the listen port.
+     * Never logs key material.
+     */
+    private boolean configMatches(String tunnelName, Path conf) {
+        try {
+            String expectedPrivate = privateKeyFrom(conf);
+            if (expectedPrivate == null) {
+                return false;
+            }
+            CommandResult pub = runner.runWithInput(List.of(wgBinary, "pubkey"),
+                    expectedPrivate + "\n", 30);
+            if (pub.failed() || pub.stdout() == null || pub.stdout().isBlank()) {
+                return false;
+            }
+            String expectedPublic = pub.stdout().trim();
+            VpnStatus current = status(tunnelName);
+            if (current == null || !current.running() || current.publicKey() == null
+                    || !expectedPublic.equals(current.publicKey())) {
+                return false;
+            }
+            Integer expectedPort = listenPortFrom(conf);
+            if (expectedPort != null && expectedPort != 0
+                    && current.listenPort() != 0 && expectedPort != current.listenPort()) {
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String privateKeyFrom(Path conf) {
+        return valueFromLine(conf, ".*PrivateKey\\s*=\\s*(\\S+)\\s*");
+    }
+
+    private static Integer listenPortFrom(Path conf) {
+        String v = valueFromLine(conf, ".*ListenPort\\s*=\\s*(\\d+)\\s*");
+        if (v == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(v);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static String valueFromLine(Path conf, String regex) {
+        try {
+            for (String line : Files.readAllLines(conf, StandardCharsets.UTF_8)) {
+                Matcher m = Pattern.compile(regex).matcher(line);
+                if (m.matches()) {
+                    return m.group(1);
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
+    }
+
+    private static String trim(String s) {
+        return s == null ? "" : s.trim();
+    }
+
     private static String firstExecutable(String... candidates) {
         for (String c : candidates) {
             Path p = Path.of(c);
@@ -414,7 +574,9 @@ public final class WireGuardAdapter implements VpnAdapter {
             lazySleep(700);
         }
         throw new VpnException(VpnException.Kind.TIMEOUT,
-                "WireGuard service did not reach the expected state");
+                String.format("WireGuard service did not reach the expected state: service=%s "
+                                + "expectRunning=%s timeout=%ds",
+                        serviceName(tunnelName), expectRunning, timeoutSeconds));
     }
 
     private static void lazySleep(long ms) {
