@@ -1,5 +1,8 @@
 package com.company.remoteaccess.vpn;
 
+import com.company.remoteaccess.networking.IpHelpers;
+import com.company.remoteaccess.security.Validation;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -59,9 +62,33 @@ public final class WgConfigBuilder {
         if (address == null || address.isBlank()) {
             throw new IllegalStateException("interface address is required");
         }
-        if (peers.isEmpty()) {
-            throw new IllegalStateException("at least one peer is required");
+        // Strict validation before anything is written to the tunnel config:
+        // malformed keys/endpoints/CIDRs would otherwise reach wg-quick verbatim.
+        Validation.requireWireGuardKey(privateKey, "interface private key");
+        try {
+            IpHelpers.parseCidr(address);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("interface address is invalid: " + address);
         }
+        Validation.requireDnsList(dns, "DNS");
+        for (PeerSpec p : peers) {
+            Validation.requireWireGuardKey(p.publicKey(), "peer public key");
+            if (p.allowedIps() != null && !p.allowedIps().isBlank()) {
+                for (String cidr : p.allowedIps().split(",")) {
+                    String c = cidr.trim();
+                    try {
+                        IpHelpers.parseCidr(c);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("peer AllowedIPs contains invalid CIDR: " + c);
+                    }
+                }
+            }
+            if (p.endpoint() != null && !p.endpoint().isBlank()) {
+                Validation.requireEndpoint(p.endpoint(), "peer endpoint");
+            }
+        }
+        // An empty peer list is valid: a gateway with no paired devices is a
+        // WireGuard interface with no peers, which WireGuard accepts.
         StringBuilder sb = new StringBuilder();
         sb.append("[Interface]\n");
         sb.append("PrivateKey = ").append(privateKey).append('\n');

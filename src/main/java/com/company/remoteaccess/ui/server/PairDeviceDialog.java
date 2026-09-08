@@ -4,8 +4,13 @@ import com.company.remoteaccess.core.configuration.AppConfig;
 import com.company.remoteaccess.networking.IpHelpers;
 import com.company.remoteaccess.security.PairingManager;
 import com.company.remoteaccess.security.PairingToken;
+import com.company.remoteaccess.security.Validation;
 import com.company.remoteaccess.server.ClientRegistry;
+import com.company.remoteaccess.server.ServerPeer;
 import com.company.remoteaccess.ui.Ui;
+import com.company.remoteaccess.vpn.VpnException;
+import com.company.remoteaccess.vpn.VpnManager;
+import com.company.remoteaccess.vpn.VpnStatus;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -95,14 +100,116 @@ public final class PairDeviceDialog {
             String host = effectiveHost(cfg);
             PairingToken payload = new PairingToken(cfg.serverName(), host, cfg.listenPort(),
                     serverPublicKey, assignedIp,
-                    pairingManager.issue(deviceName));
+                    pairingManager.issue(deviceName, publicKey));
             showResult(dialog, assignedIp, payload);
         });
 
         Scene scene = new Scene(root, 480, 300);
         scene.getStylesheets().add(PairDeviceDialog.class.getResource("/styles.css").toExternalForm());
         dialog.setScene(scene);
+        Ui.enhance(scene.getRoot());
         dialog.showAndWait();
+    }
+
+    /**
+     * Key rotation for an existing device: revoke the old key, register the new
+     * key under the same VPN address and issue a fresh single-use pairing code.
+     * The old key is removed from a running tunnel immediately (best effort).
+     */
+    public static void showRotate(Window owner, ClientRegistry registry, PairingManager pairingManager,
+                                  AppConfig cfg, String serverPublicKey, VpnManager vpn,
+                                  ServerPeer existing) {
+        if (existing == null || existing.status != ServerPeer.Status.AUTHORIZED) {
+            return;
+        }
+        Stage dialog = new Stage();
+        dialog.initOwner(owner);
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.setTitle("Replace key \u2014 " + existing.deviceName);
+
+        TextField name = new TextField(existing.deviceName);
+        TextField pubKey = new TextField();
+        pubKey.setPromptText("paste the client\u2019s NEW WireGuard public key");
+
+        Label error = Ui.label("", "pill-err");
+        error.setVisible(false);
+
+        Button cancel = new Button("Cancel");
+        cancel.getStyleClass().add("button-ghost");
+        cancel.setOnAction(e -> dialog.close());
+
+        Button rotate = new Button("Rotate key & generate code");
+        rotate.getStyleClass().add("button-primary");
+
+        VBox fields = Ui.vbox(10,
+                Ui.label("DEVICE NAME", "form-label"), name,
+                Ui.label("NEW CLIENT PUBLIC KEY", "form-label"), pubKey,
+                error);
+        HBox actions = new HBox(10, cancel, rotate);
+        actions.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox root = Ui.vbox(12, fields, actions);
+        root.setPadding(new Insets(18));
+
+        rotate.setOnAction(e -> {
+            error.setVisible(false);
+            String deviceName = name.getText().trim();
+            String publicKey = pubKey.getText().trim();
+            try {
+                Validation.requireDeviceName(deviceName, "device name");
+                Validation.requireWireGuardKey(publicKey, "client public key");
+            } catch (IllegalArgumentException ex) {
+                error.setText(ex.getMessage());
+                error.setVisible(true);
+                return;
+            }
+            if (existing.publicKey.equals(publicKey)) {
+                error.setText("Enter a NEW key, not the key already in use.");
+                error.setVisible(true);
+                return;
+            }
+            boolean duplicateKey = registry.all().stream().anyMatch(d ->
+                    d.publicKey.equals(publicKey) && !d.deviceName.equalsIgnoreCase(existing.deviceName));
+            if (duplicateKey) {
+                error.setText("A device with this public key is already registered.");
+                error.setVisible(true);
+                return;
+            }
+            try {
+                registry.revoke(existing.deviceName);
+                registry.add(deviceName, publicKey, existing.vpnAddress);
+            } catch (IllegalArgumentException ex) {
+                error.setText(ex.getMessage());
+                error.setVisible(true);
+                return;
+            }
+            dropLivePeer(vpn, cfg, existing.publicKey);
+            String host = effectiveHost(cfg);
+            PairingToken payload = new PairingToken(cfg.serverName(), host, cfg.listenPort(),
+                    serverPublicKey, existing.vpnAddress,
+                    pairingManager.issue(deviceName, publicKey));
+            showResult(dialog, existing.vpnAddress, payload);
+        });
+
+        Scene scene = new Scene(root, 480, 300);
+        scene.getStylesheets().add(PairDeviceDialog.class.getResource("/styles.css").toExternalForm());
+        dialog.setScene(scene);
+        Ui.enhance(scene.getRoot());
+        dialog.showAndWait();
+    }
+
+    private static void dropLivePeer(VpnManager vpn, AppConfig cfg, String oldPublicKey) {
+        if (vpn == null || oldPublicKey == null) {
+            return;
+        }
+        try {
+            VpnStatus st = vpn.status();
+            if (st != null && st.running()) {
+                vpn.adapter().removePeer(cfg.tunnelName(), oldPublicKey);
+            }
+        } catch (VpnException ignored) {
+            // revoked key may linger until the next rebootstrap regenerates peers
+        }
     }
 
     private static void showResult(Stage dialog, String assignedIp, PairingToken payload) {
@@ -141,17 +248,13 @@ public final class PairDeviceDialog {
 
         VBox.setVgrow(right, Priority.ALWAYS);
         dialog.getScene().setRoot(content);
+        Ui.enhance(content);
         dialog.setWidth(Math.max(dialog.getWidth(), 720));
     }
 
     private static String effectiveHost(AppConfig cfg) {
         if (cfg.serverHost() != null && !cfg.serverHost().isBlank()) {
             return cfg.serverHost();
-        }
-        if (cfg.serverPublicEndpoint() != null && !cfg.serverPublicEndpoint().isBlank()) {
-            String ep = cfg.serverPublicEndpoint();
-            int idx = ep.indexOf(':');
-            return idx > 0 ? ep.substring(0, idx) : ep;
         }
         return "gateway.local";
     }

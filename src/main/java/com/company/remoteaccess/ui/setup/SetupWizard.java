@@ -59,6 +59,7 @@ public final class SetupWizard {
         Scene scene = new Scene(root, 580, 500);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         stage.setScene(scene);
+        Ui.enhance(root);
     }
 
     private static Region spacer() {
@@ -111,7 +112,7 @@ public final class SetupWizard {
     void setPage(VBox page) {
         current = page;
         content.getChildren().setAll(page);
-        back.setDisable(true);
+        Ui.enhance(page);
     }
 
     /** Back navigation for wizard pages. */
@@ -122,7 +123,8 @@ public final class SetupWizard {
     void finish(AppConfig cfg) {
         stage.close();
         if (onComplete != null) {
-            onComplete.accept(cfg);
+            // Record that the first-run role/setup choice was completed.
+            onComplete.accept(cfg.with("app.setupDone", true));
         }
     }
 
@@ -135,6 +137,7 @@ public final class SetupWizard {
     private static final class WelcomePage extends VBox {
         WelcomePage(SetupWizard w) {
             w.setTitle("How will you use this computer?", "");
+            w.setBack(w::showWelcome, false);
 
             RadioButton client = new RadioButton(
                     "This is my HOME computer \u2014 I want to reach my company network");
@@ -143,7 +146,12 @@ public final class SetupWizard {
             ToggleGroup group = new ToggleGroup();
             client.setToggleGroup(group);
             server.setToggleGroup(group);
-            client.setSelected(true);
+            // Keep the last chosen role pre-selected when the chooser re-runs.
+            if (w.app().context().config().mode() == com.company.remoteaccess.core.state.Role.SERVER) {
+                server.setSelected(true);
+            } else {
+                client.setSelected(true);
+            }
 
             w.setNext("Continue",
                     () -> w.setPage(server.isSelected()
@@ -153,7 +161,11 @@ public final class SetupWizard {
 
             getChildren().add(new VBox(14, client, server,
                     Ui.label("The gateway needs administrator privileges. "
-                            + "The client only needs them while connecting.", "form-hint")));
+                            + "The client only needs them while connecting.", "form-hint"),
+                    Ui.label("Requirements: WireGuard (wg) installed on both "
+                            + "machines, and administrator rights on the gateway. "
+                            + "You can check this later under Settings or with "
+                            + "--diagnostics.", "form-hint")));
             setPadding(new Insets(6, 6, 0, 6));
         }
     }

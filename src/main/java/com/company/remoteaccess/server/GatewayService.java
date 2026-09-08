@@ -8,6 +8,8 @@ import com.company.remoteaccess.logging.LogCategory;
 import com.company.remoteaccess.networking.NetworkManager;
 import com.company.remoteaccess.networking.NetworkManager.NetworkSnapshot;
 import com.company.remoteaccess.platform.Elevation;
+import com.company.remoteaccess.security.AuditLog;
+import com.company.remoteaccess.security.PairingManager;
 import com.company.remoteaccess.vpn.VpnException;
 import com.company.remoteaccess.vpn.VpnManager;
 import com.company.remoteaccess.vpn.VpnStatus;
@@ -42,7 +44,9 @@ public final class GatewayService implements AutoCloseable {
     private final NetworkManager network;
     private final HealthMonitor health;
     private final ClientRegistry registry;
+    private final PairingManager pairingManager;
     private final Supplier<AppConfig> config;
+    private final AuditLog audit;
     private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean networkOnline = new AtomicBoolean(false);
@@ -58,12 +62,21 @@ public final class GatewayService implements AutoCloseable {
             new java.util.concurrent.atomic.AtomicReference<>(null);
 
     public GatewayService(VpnManager vpn, NetworkManager network, HealthMonitor health,
-                          ClientRegistry registry, Supplier<AppConfig> config) {
+                          ClientRegistry registry, PairingManager pairingManager,
+                          Supplier<AppConfig> config) {
+        this(vpn, network, health, registry, pairingManager, config, null);
+    }
+
+    public GatewayService(VpnManager vpn, NetworkManager network, HealthMonitor health,
+                          ClientRegistry registry, PairingManager pairingManager,
+                          Supplier<AppConfig> config, AuditLog audit) {
         this.vpn = vpn;
         this.network = network;
         this.health = health;
         this.registry = registry;
+        this.pairingManager = pairingManager;
         this.config = config;
+        this.audit = audit;
     }
 
     public void addListener(Listener l) {
@@ -94,6 +107,7 @@ public final class GatewayService implements AutoCloseable {
                         "gateway start requested in non-server mode");
                 return;
             }
+            audit("gateway", "start", "mode=server");
             backoff = new BackoffStrategy(cfg.backoffBaseMs() <= 0 ? 2000 : cfg.backoffBaseMs(),
                     60_000, cfg.maxRetries() <= 0 ? 5 : cfg.maxRetries(), 250);
             network.addChangeListener(this::onNetworkChanged);
@@ -112,6 +126,9 @@ public final class GatewayService implements AutoCloseable {
             return;
         }
         state = next;
+        if (isAudited(next)) {
+            audit("gateway", "state_" + next.name().toLowerCase(), "from=" + from.name().toLowerCase());
+        }
         AppLogger.getLogger().info(from.toString(), "gateway state %s -> %s", from, next);
         for (Listener l : listeners) {
             try {
@@ -182,9 +199,15 @@ public final class GatewayService implements AutoCloseable {
             health.clearError();
             recoveryAttempt = 0;
             setState(GatewayState.ONLINE);
-            progress("Gateway online");
-            AppLogger.getLogger().info(LogCategory.SERVER,
-                    "gateway online with %d authorized device(s)", peers.size());
+            if (peers.isEmpty()) {
+                progress("Gateway online \u2014 no devices paired yet; click \u201cPair a device\u201d");
+                AppLogger.getLogger().info(LogCategory.SERVER,
+                        "gateway online with no authorized devices; awaiting first pairing");
+            } else {
+                progress("Gateway online");
+                AppLogger.getLogger().info(LogCategory.SERVER,
+                        "gateway online with %d authorized device(s)", peers.size());
+            }
         } catch (VpnException e) {
             handleRecoveryFailure(e);
         } catch (Exception e) {
@@ -204,6 +227,18 @@ public final class GatewayService implements AutoCloseable {
         }
         if (e.kind() == VpnException.Kind.BINARIES_MISSING) {
             setState(GatewayState.BINARIES_MISSING);
+            return;
+        }
+        if (e.kind() == VpnException.Kind.NAT_CONFIGURATION) {
+            setState(GatewayState.NAT_FAILED);
+            AppLogger.getLogger().error(LogCategory.SERVER, "NAT configuration failed: %s",
+                    e.getMessage());
+            return;
+        }
+        if (e.kind() == VpnException.Kind.FIREWALL_CONFIGURATION) {
+            setState(GatewayState.FIREWALL_FAILED);
+            AppLogger.getLogger().error(LogCategory.SERVER, "firewall configuration failed: %s",
+                    e.getMessage());
             return;
         }
         if (recoveryAttempt >= backoff.maxRetries()) {
@@ -326,6 +361,11 @@ public final class GatewayService implements AutoCloseable {
                         }
                     });
                 }
+                // First confirmed handshake proves key ownership: consume the
+                // matching one-time pairing token applied to this peer.
+                if (pairingManager != null) {
+                    pairingManager.claimForHandshake(p.publicKey());
+                }
             }
         }
     }
@@ -333,6 +373,7 @@ public final class GatewayService implements AutoCloseable {
     @Override
     public void close() {
         AppLogger.getLogger().info(LogCategory.SERVER, "gateway shutdown started");
+        audit("gateway", "stop", "clean_shutdown");
         setState(GatewayState.STOPPING);
         running.set(false);
         if (network != null) {
@@ -343,6 +384,8 @@ public final class GatewayService implements AutoCloseable {
         } catch (Exception ignored) {
         }
         vpn.removeAllManagedNetworking();
+        vpn.removeAllManagedFirewall();
+        vpn.removeAllManagedNat();
         setState(GatewayState.STOPPED);
         AppLogger.getLogger().info(LogCategory.SERVER, "gateway shutdown complete");
     }
@@ -351,6 +394,7 @@ public final class GatewayService implements AutoCloseable {
     public void rebootstrap() {
         new Thread(() -> {
             AppLogger.getLogger().info(LogCategory.SERVER, "gateway rebootstrap requested");
+            audit("gateway", "rebootstrap", "requested");
             running.set(false);
             try {
                 vpn.stopTunnel();
@@ -358,6 +402,14 @@ public final class GatewayService implements AutoCloseable {
             }
             try {
                 vpn.removeAllManagedNetworking();
+            } catch (Exception ignored) {
+            }
+            try {
+                vpn.removeAllManagedFirewall();
+            } catch (Exception ignored) {
+            }
+            try {
+                vpn.removeAllManagedNat();
             } catch (Exception ignored) {
             }
             setState(GatewayState.STOPPED);
@@ -376,6 +428,21 @@ public final class GatewayService implements AutoCloseable {
             Thread.sleep(ms);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static boolean isAudited(GatewayState s) {
+        return s == GatewayState.ONLINE
+                || s == GatewayState.NAT_FAILED
+                || s == GatewayState.FIREWALL_FAILED
+                || s == GatewayState.PERMISSION_REQUIRED
+                || s == GatewayState.BINARIES_MISSING
+                || s == GatewayState.ERROR;
+    }
+
+    private void audit(String actor, String action, String details) {
+        if (audit != null) {
+            audit.append(actor, action, details);
         }
     }
 

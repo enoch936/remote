@@ -91,12 +91,63 @@ public final class ClientDashboard extends VBox {
         Label healthTitle = Ui.label("HEALTH CHECKS", "card-title");
         healthBox.getChildren().add(healthTitle);
 
-        getChildren().addAll(banner, mainCard, stats, healthBox);
+        VBox keyCard = buildKeyCard();
+
+        getChildren().addAll(banner, mainCard, stats, healthBox, keyCard);
         VBox.setVgrow(healthBox, Priority.ALWAYS);
 
         tick.setCycleCount(Animation.INDEFINITE);
         tick.play();
         refresh();
+    }
+
+    private void toggleConnect() {
+        if (service.state() == ConnectionState.CONNECTED) {
+            service.disconnect();
+        } else {
+            service.connect();
+        }
+    }
+
+    private VBox buildKeyCard() {
+        Label keyLabel = Ui.label("", "form-hint");
+        keyLabel.setWrapText(true);
+        Button copy = new Button("Copy public key");
+        copy.getStyleClass().add("button-secondary");
+        copy.setOnAction(e -> {
+            String text = keyLabel.getText().trim();
+            javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+            content.putString(text);
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+        });
+
+        boolean wgOk = app.context().vpnAvailable();
+        String key = "";
+        if (wgOk) {
+            try {
+                key = app.context().vpn().ensureClientKeys().publicKey();
+            } catch (Exception ignored) {
+                // leave blank
+            }
+        }
+        keyLabel.setText(wgOk && !key.isBlank()
+                ? key
+                : "This machine's WireGuard public key appears here once WireGuard is "
+                + "installed \u2014 share it with the gateway admin to pair.");
+        copy.setVisible(wgOk && !key.isBlank());
+        copy.setManaged(wgOk && !key.isBlank());
+
+        HBox row = new HBox(10,
+                copy,
+                Ui.label("This key is public \u2014 the gateway admin needs it to issue "
+                        + "a pairing code.", "form-hint"));
+        row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        VBox card = new VBox(8,
+                Ui.label("MY PUBLIC KEY (share with the gateway admin)", "card-title"),
+                keyLabel, row);
+        card.getStyleClass().add("card");
+        return card;
     }
 
     private VBox stat(String title, Label value) {
@@ -110,20 +161,12 @@ public final class ClientDashboard extends VBox {
         return card;
     }
 
-    private void toggleConnect() {
-        if (service.state() == ConnectionState.CONNECTED) {
-            service.disconnect();
-        } else {
-            service.connect();
-        }
-    }
-
     private void refresh() {
         ConnectionState st = service.state();
         stateLabel.setText(st.label());
         connectButton.setDisable(st.isTransient());
         connectButton.setText(st == ConnectionState.CONNECTED ? "DISCONNECT" : "CONNECT");
-        connectButton.getStyleClass().setAll(
+        connectButton.getStyleClass().setAll("button",
                 st == ConnectionState.CONNECTED ? "button-danger" : "button-primary");
 
         if (st == ConnectionState.CONNECTED) {

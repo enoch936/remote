@@ -43,10 +43,9 @@ public final class WindowsNat extends NatManager {
                             + "Set HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\IPEnableRouter=1 "
                             + "as Administrator and reboot, or disable Full-Tunnel mode.");
         }
-        String returnAction = "Note: a reboot may be required for WinNAT to route VPN traffic "
-                + "to '" + lanInterface + "'.";
-        throw new NetworkException(NetworkException.Kind.PERMISSION_REQUIRED,
-                "NAT configured. " + returnAction);
+        AppLogger.getLogger().warn(LogCategory.FIREWALL,
+                "NAT %s configured. Note: a reboot may be required for WinNAT to route VPN traffic to '%s'.",
+                NAT_NAME, lanInterface);
     }
 
     @Override
@@ -81,6 +80,37 @@ public final class WindowsNat extends NatManager {
         actions.add("Set IPEnableRouter=1 in HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters.");
         actions.add("Reboot so WinNAT starts routing the VPN subnet toward " + lanInterface + ".");
         return actions;
+    }
+
+    @Override
+    public NatResult verifyNat(String vpnSubnetCidr, String lanInterface) {
+        boolean natPresent;
+        try {
+            CommandResult r = runner.run("powershell", "-NoProfile", "-Command",
+                    "if ((Get-NetNat -Name '" + NAT_NAME + "' -ErrorAction SilentlyContinue) -ne $null) { 'true' } else { 'false' }");
+            natPresent = r.success() && r.stdout() != null && r.stdout().trim().equalsIgnoreCase("true");
+        } catch (Exception e) {
+            return NatResult.error("unable to query NetNat '" + NAT_NAME + "': " + e.getMessage());
+        }
+        boolean forwarding;
+        try {
+            CommandResult r = runner.run("powershell", "-NoProfile", "-Command",
+                    "(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' "
+                            + "-Name 'IPEnableRouter' -ErrorAction SilentlyContinue).IPEnableRouter");
+            forwarding = r.success() && r.stdout() != null && r.stdout().trim().startsWith("1");
+        } catch (Exception e) {
+            forwarding = false;
+        }
+        if (!natPresent) {
+            return NatResult.notEnabled("Windows NetNat '" + NAT_NAME + "' is missing for "
+                    + vpnSubnetCidr + "; full-tunnel traffic is not being NATed", missingRequirements(vpnSubnetCidr, lanInterface));
+        }
+        if (!forwarding) {
+            return NatResult.partial("NetNat exists but IPEnableRouter is off (HKLM\\...\\Tcpip\\Parameters). "
+                    + "A reboot may be needed for WinNAT to route " + vpnSubnetCidr + " toward " + lanInterface,
+                    java.util.List.of("Set IPEnableRouter=1 and reboot, or run the application as Administrator."));
+        }
+        return NatResult.verified("Windows NAT verified: NetNat '" + NAT_NAME + "' present and IP forwarding enabled");
     }
 
     private void ensureElevated() throws NetworkException {

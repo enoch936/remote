@@ -7,8 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WgConfigBuilderTest {
 
-    private static final String PRIV = "yOOvprivatekeytesttesttesttesttesttes+t=".replace("+", "A").replace("/", "a");
-    private static final String PUB = "PUBK-testkeytestkeytestkeytestkeytestkeyxz";
+    private static final String PRIV = "A".repeat(43) + "=";
+    private static final String PUB = "B".repeat(43) + "=";
 
     @Test
     void buildsInterfaceAndPeerSections() {
@@ -52,8 +52,52 @@ class WgConfigBuilderTest {
     }
 
     @Test
-    void requiresAtLeastOnePeer() {
-        assertThrows(IllegalStateException.class,
-                () -> new WgConfigBuilder().interfaceKeys(PRIV, "10.50.0.2/32").build());
+    void allowsEmptyPeerList() {
+        String conf = new WgConfigBuilder()
+                .interfaceKeys(PRIV, "10.50.0.1/24")
+                .listenPort(51820)
+                .build();
+        assertTrue(conf.contains("[Interface]"));
+        assertTrue(conf.contains("PrivateKey = " + PRIV));
+        assertTrue(conf.contains("ListenPort = 51820"));
+        assertTrue(!conf.contains("[Peer]"));
+    }
+
+    @Test
+    void rejectsMalformedInterfacePrivateKey() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new WgConfigBuilder().interfaceKeys("not-a-wg-key", "10.50.0.1/24").build());
+    }
+
+    @Test
+    void rejectsMalformedPeerPublicKey() {
+        WgConfigBuilder wg = new WgConfigBuilder()
+                .interfaceKeys(PRIV, "10.50.0.1/24")
+                .addPeer("PUBK-testkeytestkeytestkeytestkeytestkeyxz", "10.50.0.2/32", null, null);
+        assertThrows(IllegalArgumentException.class, wg::build);
+    }
+
+    @Test
+    void rejectsMalformedPeerEndpoint() {
+        WgConfigBuilder wg = new WgConfigBuilder()
+                .interfaceKeys(PRIV, "10.50.0.1/24")
+                .addPeer(PUB, "10.50.0.2/32", "bad endpoint with spaces:51820", 25);
+        assertThrows(IllegalArgumentException.class, wg::build);
+    }
+
+    @Test
+    void rejectsMalformedAllowedIps() {
+        WgConfigBuilder wg = new WgConfigBuilder()
+                .interfaceKeys(PRIV, "10.50.0.1/24")
+                .addPeer(PUB, "10.50.0.2/32,999.1.1.1/32", null, null);
+        assertThrows(IllegalArgumentException.class, wg::build);
+    }
+
+    @Test
+    void rejectsMalformedInterfaceAddress() {
+        WgConfigBuilder wg = new WgConfigBuilder()
+                .interfaceKeys(PRIV, "10.50.0.1")
+                .addPeer(PUB, "10.50.0.2/32", null, null);
+        assertThrows(IllegalArgumentException.class, wg::build);
     }
 }

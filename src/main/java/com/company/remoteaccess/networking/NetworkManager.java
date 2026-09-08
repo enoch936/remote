@@ -140,6 +140,66 @@ public class NetworkManager implements AutoCloseable {
                 .filter(java.util.Objects::nonNull);
     }
 
+    /**
+     * Best-effort detection of the machine's own LAN CIDR (IPv4 address + prefix)
+     * on the first physical/up interface. Used by the wizard's auto-detect button;
+     * {@code @Optional.empty} when nothing usable is found.
+     */
+    public Optional<String> detectLanCidr() {
+        return switch (Os.family()) {
+            case WINDOWS -> detectWindowsCidr();
+            case LINUX -> detectLinuxCidr();
+            default -> Optional.empty();
+        };
+    }
+
+    private Optional<String> detectWindowsCidr() {
+        CommandResult r = runner.run(cmd("powershell", "-NoProfile", "-Command",
+                "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue "
+                        + "| Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } "
+                        + "| Select-Object -First 1 InterfaceAlias,IPAddress,PrefixLength "
+                        + "| ConvertTo-Json -Compress"));
+        if (r.failed() || r.stdout() == null || r.stdout().isBlank()) {
+            AppLogger.getLogger().warn(LogCategory.NETWORK,
+                    "LAN CIDR detection failed (powershell): %s", r.stderr());
+            return Optional.empty();
+        }
+        try {
+            var o = com.company.remoteaccess.util.Json.parseObject(r.stdout());
+            String ip = o.get("IPAddress");
+            String prefix = o.get("PrefixLength");
+            if (ip == null || ip.isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(prefix == null ? ip + "/24" : ip + "/" + prefix);
+        } catch (Exception e) {
+            AppLogger.getLogger().warn(LogCategory.NETWORK,
+                    "LAN CIDR detection output unparseable", e);
+            return Optional.empty();
+        }
+    }
+
+    private Optional<String> detectLinuxCidr() {
+        CommandResult r = runner.run(cmd("ip", "-o", "-4", "addr", "show"));
+        if (r.failed() || r.stdout() == null) {
+            return Optional.empty();
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "(?m)^\\d+: (\\S+)[\\s\\S]*?\\binet (\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+)")
+                .matcher(r.stdout());
+        while (m.find()) {
+            String iface = m.group(1);
+            if (iface.startsWith("lo") || iface.startsWith("wg") || iface.startsWith("tun")) {
+                continue;
+            }
+            String cidr = m.group(2);
+            if (!cidr.startsWith("169.254.")) {
+                return Optional.of(cidr);
+            }
+        }
+        return Optional.empty();
+    }
+
     // ------------------------------------------------------------------
     // platform queries
     // ------------------------------------------------------------------

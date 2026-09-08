@@ -41,8 +41,6 @@ public final class AppConfig {
         server.put("vpnSubnet", "10.50.0.0/24");
         server.put("mtu", 1420);
         server.put("persistentKeepalive", 25);
-        server.put("publicEndpoint", "");
-        server.put("endpointMode", "AUTO");
         config.put("server", server);
 
         Map<String, Object> vpn = new LinkedHashMap<>();
@@ -72,6 +70,8 @@ public final class AppConfig {
         client.put("serverEndpoint", "");
         client.put("dnsOverride", "");
         client.put("vpnIp", "");
+        client.put("pairApplied", false);
+        client.put("pubKeyHash", "");
         config.put("client", client);
 
         Map<String, Object> startup = new LinkedHashMap<>();
@@ -80,6 +80,7 @@ public final class AppConfig {
 
         Map<String, Object> app = new LinkedHashMap<>();
         app.put("theme", "dark");
+        app.put("setupDone", false);
         config.put("app", app);
 
         return new AppConfig(CURRENT_VERSION, Role.CLIENT, config);
@@ -112,6 +113,28 @@ public final class AppConfig {
         return strVal(app.get("theme"), "dark");
     }
 
+    /** Whether the first-run role/setup wizard has completed. */
+    public boolean setupDone() {
+        return boolVal(section(data, "app").get("setupDone"), false);
+    }
+
+    /**
+     * Decide whether setup is complete. The wizard must run once (recorded via the
+     * {@code app.setupDone} marker). Seat configs written before that marker existed
+     * are only honored when they are genuinely ready — a paired client (marker absent)
+     * or a gateway that generated its server keys — otherwise the first-run role
+     * chooser re-opens instead of silently defaulting to a role.
+     */
+    public static boolean isSetupComplete(AppConfig cfg, boolean clientReady, boolean serverKeyPresent) {
+        if (cfg == null) {
+            return false;
+        }
+        if (cfg.setupDone()) {
+            return true;
+        }
+        return cfg.mode() == Role.CLIENT ? clientReady : serverKeyPresent;
+    }
+
     // ----- server section -----
 
     public String serverName() {
@@ -120,14 +143,6 @@ public final class AppConfig {
 
     public String serverHost() {
         return strVal(section(data, "server").get("host"), "");
-    }
-
-    public String serverPublicEndpoint() {
-        return strVal(section(data, "server").get("publicEndpoint"), "");
-    }
-
-    public String serverEndpointMode() {
-        return strVal(section(data, "server").get("endpointMode"), "AUTO");
     }
 
     public int listenPort() {
@@ -152,10 +167,6 @@ public final class AppConfig {
 
     public int persistentKeepalive() {
         return intVal(section(data, "server").get("persistentKeepalive"), 25);
-    }
-
-    public boolean allowFullLan() {
-        return boolVal(section(data, "server").get("allowFullLan"), false);
     }
 
     // ----- vpn section -----
@@ -221,6 +232,15 @@ public final class AppConfig {
 
     public String clientDnsOverride() {
         return strVal(section(data, "client").get("dnsOverride"), "");
+    }
+
+    public boolean clientPairApplied() {
+        return boolVal(section(data, "client").get("pairApplied"), false);
+    }
+
+    /** SHA-256 pin of this device's WireGuard public key, recorded at pairing. Empty when not pinned. */
+    public String clientPubKeyHash() {
+        return strVal(section(data, "client").get("pubKeyHash"), "");
     }
 
     // ----- startup section -----

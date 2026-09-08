@@ -74,10 +74,14 @@ public final class WireGuardAdapter implements VpnAdapter {
                 wireGuardExe = exe.toAbsolutePath().toString();
             }
         } else {
-            wgQuick = Files.isExecutable(Path.of("/usr/bin/wg-quick"))
-                    ? "/usr/bin/wg-quick"
-                    : (Files.isExecutable(Path.of("/usr/local/bin/wg-quick"))
-                    ? "/usr/local/bin/wg-quick" : null);
+            wgQuick = firstExecutable("/usr/bin/wg-quick", "/usr/local/bin/wg-quick",
+                    "/opt/homebrew/bin/wg-quick", "/opt/local/bin/wg-quick");
+            if (wgQuick == null) {
+                CommandResult which = runner.run("which", "wg-quick");
+                if (which.success() && which.stdout() != null && !which.stdout().isBlank()) {
+                    wgQuick = which.stdout().lines().findFirst().orElse("").trim();
+                }
+            }
         }
         if (Os.isWindows() && wireGuardExe == null) {
             throw new VpnException(VpnException.Kind.BINARIES_MISSING,
@@ -166,13 +170,58 @@ public final class WireGuardAdapter implements VpnAdapter {
             waitForService(tunnelName, true, 30);
         } else {
             ensureRoot("start the VPN tunnel");
-            CommandResult r = runner.run(wgQuick, "up", tunnelName);
-            if (r.failed()) {
-                throw new VpnException(VpnException.Kind.START_FAILED,
-                        "wg-quick up failed: " + r.stderr());
+            if (tunnelAlreadyUp(listTunnels(), tunnelName)) {
+                AppLogger.getLogger().info(LogCategory.VPN,
+                        "tunnel %s already up; reusing existing interface", tunnelName);
+            } else {
+                CommandResult r = runner.run(wgQuick, "up", tunnelName);
+                if (r.failed()) {
+                    throw new VpnException(VpnException.Kind.START_FAILED,
+                            "wg-quick up failed: " + r.stderr());
+                }
+            }
+            if (Os.isMacos()) {
+                flushDnsCache();
             }
         }
         AppLogger.getLogger().info(LogCategory.VPN, "tunnel started: %s", tunnelName);
+    }
+
+    /** Currently existing interfaces (from {@code wg show interfaces}). */
+    public List<String> listTunnels() {
+        CommandResult r = runner.run(wgBinary, "show", "interfaces");
+        if (r.failed() || r.stdout() == null) {
+            return List.of();
+        }
+        return parseInterfaces(r.stdout());
+    }
+
+    static List<String> parseInterfaces(String raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        return raw.lines().map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
+    static boolean tunnelAlreadyUp(List<String> tunnels, String tunnelName) {
+        return tunnels != null && tunnelName != null
+                && tunnels.stream().anyMatch(tunnelName::equals);
+    }
+
+    /** macOS: DNS servers supplied by wg-quick are applied by the resolver only
+     *  after a cache flush; a stale cache otherwise holds the pre-tunnel answers. */
+    private void flushDnsCache() {
+        CommandResult dscache = runner.run("dscacheutil", "-flushcache");
+        CommandResult mdns = runner.run("killall", "-HUP", "mDNSResponder");
+        boolean anyOk = dscache.success() || mdns.success();
+        if (anyOk) {
+            AppLogger.getLogger().debug(LogCategory.VPN,
+                    "macOS DNS cache flushed after tunnel start");
+        } else {
+            AppLogger.getLogger().warn(LogCategory.VPN,
+                    "macOS DNS cache flush reported failures: %s | %s",
+                    dscache.stderr(), mdns.stderr());
+        }
     }
 
     @Override
@@ -321,6 +370,16 @@ public final class WireGuardAdapter implements VpnAdapter {
 
     private static String serviceName(String tunnelName) {
         return "WireGuardTunnel$" + tunnelName;
+    }
+
+    private static String firstExecutable(String... candidates) {
+        for (String c : candidates) {
+            Path p = Path.of(c);
+            if (Files.isExecutable(p)) {
+                return p.toAbsolutePath().toString();
+            }
+        }
+        return null;
     }
 
     private boolean isServicePresent(String tunnelName) {

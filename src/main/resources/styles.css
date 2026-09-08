@@ -1,60 +1,104 @@
-/* ------------------------------------------------------------------
-   Company Remote Access — theme
-   Dark theme by default; `.light` overrides specific tokens.
-   ------------------------------------------------------------------ */
+/* ====================================================================
+   Company Remote Access — modern glass theme ("glassic" desktop)
+   ====================================================================
+   Dark is the default theme; the `.light` class on the shell overrides
+   the palette tokens. All surfaces are translucent "glass" layered over
+   an animated aurora background, with gradient fills, edge highlights,
+   soft glow shadows and hover/armed/pressed states on every control.
+   ==================================================================== */
 
 .root {
-    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -fx-font-family: "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
     -fx-font-size: 13px;
-    -fx-background-color: -bg;
+    -fx-font-smoothing-type: lcd;
+}
+
+/* ---------------- dark palette (default) ---------------- */
+
+.root {
+    -bg: #0a0f1a;
+    -bg-0: #060a13;
+    -bg-1: #0b1322;
+    -surface: rgba(18, 24, 36, 0.72);
+    -surface-solid: #121826;
+    -surface-2: rgba(24, 32, 48, 0.66);
+    -surface-3: rgba(33, 43, 62, 0.60);
+    -glass-hi: rgba(255, 255, 255, 0.10);
+    -glass-lo: rgba(255, 255, 255, 0.04);
+    -border: rgba(148, 163, 184, 0.16);
+    -border-hi: rgba(255, 255, 255, 0.22);
+    -text: #e8eef7;
+    -text-dim: #94a2b6;
+    -accent: #4f8cff;
+    -accent-hover: #6ba0ff;
+    -accent-2: #7b6bff;
+    -ok: #34d399;
+    -warn: #fbbf24;
+    -err: #fb7185;
+    -ok-soft: rgba(52, 211, 153, 0.16);
+    -warn-soft: rgba(251, 191, 36, 0.16);
+    -err-soft: rgba(251, 113, 133, 0.16);
+    -accent-soft: rgba(79, 140, 255, 0.22);
+    -shadow: rgba(0, 0, 0, 0.45);
+    -glow-accent: rgba(79, 140, 255, 0.45);
+    -glow-ok: rgba(52, 211, 153, 0.45);
+    -glow-warn: rgba(251, 191, 36, 0.45);
+    -glow-err: rgba(251, 113, 133, 0.45);
+}
+
+/* ---------------- light palette ---------------- */
+
+.root.light {
+    -bg: #e8eefb;
+    -bg-0: #dfe8f8;
+    -bg-1: #eef3fc;
+    -surface: rgba(255, 255, 255, 0.66);
+    -surface-solid: #ffffff;
+    -surface-2: rgba(248, 250, 255, 0.72);
+    -surface-3: rgba(226, 234, 250, 0.78);
+    -glass-hi: rgba(255, 255, 255, 0.85);
+    -glass-lo: rgba(255, 255, 255, 0.35);
+    -border: rgba(30, 41, 59, 0.14);
+    -border-hi: rgba(255, 255, 255, 0.9);
+    -text: #0f1a2e;
+    -text-dim: #56657f;
+    -accent: #2563eb;
+    -accent-hover: #3b76f2;
+    -accent-2: #7b3dff;
+    -ok: #059669;
+    -warn: #d97706;
+    -err: #dc2626;
+    -ok-soft: rgba(5, 150, 105, 0.14);
+    -warn-soft: rgba(217, 119, 6, 0.14);
+    -err-soft: rgba(220, 38, 38, 0.12);
+    -accent-soft: rgba(37, 99, 235, 0.14);
+    -shadow: rgba(30, 41, 59, 0.18);
+    -glow-accent: rgba(37, 99, 235, 0.35);
+    -glow-ok: rgba(5, 150, 105, 0.35);
+    -glow-warn: rgba(217, 119, 6, 0.35);
+    -glow-err: rgba(220, 38, 38, 0.35);
+}
+
+/* ---------------- base background ---------------- */
+
+.root {
+    -fx-background-color: linear-gradient(to top right,
+            -bg-0 0%, -bg-1 52%, -bg 100%);
     -fx-text-fill: -text;
 }
 
-/* dark palette (default) */
-.root {
-    -bg: #0d1117;
-    -surface: #161b22;
-    -surface-2: #1c2430;
-    -surface-3: #232c3a;
-    -border: rgba(255, 255, 255, 0.08);
-    -text: #e6edf3;
-    -text-dim: #8b98a5;
-    -accent: #3b82f6;
-    -accent-hover: #5a95f7;
-    -ok: #22c55e;
-    -warn: #f59e0b;
-    -err: #ef4444;
-    -ok-soft: rgba(34, 197, 94, 0.14);
-    -warn-soft: rgba(245, 158, 11, 0.14);
-    -err-soft: rgba(239, 68, 68, 0.14);
-    -accent-soft: rgba(59, 130, 246, 0.16);
-    -shadow: rgba(0, 0, 0, 0.35);
+.app-shell {
+    -fx-background-color: transparent;
 }
 
-.root.light {
-    -bg: #f4f6f9;
-    -surface: #ffffff;
-    -surface-2: #eef1f6;
-    -surface-3: #e3e8f0;
-    -border: rgba(15, 23, 42, 0.10);
-    -text: #111827;
-    -text-dim: #5b6572;
-    -accent: #2563eb;
-    -accent-hover: #1d4ed8;
-    -ok: #16a34a;
-    -warn: #d97706;
-    -err: #dc2626;
-    -ok-soft: rgba(22, 163, 74, 0.12);
-    -warn-soft: rgba(217, 119, 6, 0.12);
-    -err-soft: rgba(220, 38, 38, 0.12);
-    -accent-soft: rgba(37, 99, 235, 0.12);
-    -shadow: rgba(15, 23, 42, 0.12);
+.aurora {
+    -fx-background-color: transparent;
 }
 
-/* ---------------- app chrome ---------------- */
+/* ---------------- app chrome (glass bars) ---------------- */
 
 .app-title {
-    -fx-font-size: 17px;
+    -fx-font-size: 18px;
     -fx-font-weight: bold;
     -fx-text-fill: -text;
 }
@@ -65,42 +109,56 @@
 }
 
 .header-bar {
-    -fx-background-color: -surface;
-    -fx-border-color: transparent transparent -border transparent;
+    -fx-background-color: linear-gradient(to right, -surface, -surface-2);
+    -fx-effect: dropshadow(gaussian, -shadow, 16, 0.2, 0, 4);
+    -fx-border-color: -glass-hi -glass-lo -border -glass-lo;
     -fx-border-width: 0 0 1 0;
-    -fx-padding: 12 20 12 20;
+    -fx-padding: 12 22 12 22;
 }
 
 .footer-bar {
-    -fx-background-color: -surface;
-    -fx-border-color: -border transparent transparent transparent;
+    -fx-background-color: linear-gradient(to right, -surface-2, -surface);
+    -fx-border-color: -border;
     -fx-border-width: 1 0 0 0;
-    -fx-padding: 8 20 8 20;
+    -fx-padding: 8 22 8 22;
     -fx-text-fill: -text-dim;
     -fx-font-size: 11px;
 }
 
-/* ---------------- cards ---------------- */
+/* ---------------- glass cards ---------------- */
 
 .card {
-    -fx-background-color: -surface;
-    -fx-background-radius: 14;
-    -fx-border-color: -border;
-    -fx-border-radius: 14;
-    -fx-effect: dropshadow(gaussian, -shadow, 18, 0.15, 0, 6);
+    -fx-background-color:
+        linear-gradient(from 0% 0% to 0% 42%, -glass-hi, rgba(255, 255, 255, 0.00)),
+        -surface;
+    -fx-background-radius: 16;
+    -fx-background-insets: 0, 0;
+    -fx-border-color: -glass-hi -glass-lo -border -glass-lo;
+    -fx-border-radius: 16;
+    -fx-effect: dropshadow(gaussian, -shadow, 22, 0.22, 0, 8);
     -fx-padding: 18;
 }
 
+.card:hover {
+    -fx-border-color: -border-hi;
+    -fx-effect: dropshadow(gaussian, -shadow, 30, 0.28, 0, 10);
+}
+
 .card-flat {
-    -fx-background-color: -surface-2;
-    -fx-background-radius: 12;
+    -fx-background-color:
+        linear-gradient(from 0% 0% to 0% 38%, -glass-hi, rgba(255, 255, 255, 0.00)),
+        -surface-2;
+    -fx-background-radius: 14;
+    -fx-border-color: -border -glass-lo -glass-lo -border;
+    -fx-border-radius: 14;
     -fx-padding: 14;
 }
 
 .card-title {
-    -fx-font-size: 12px;
+    -fx-font-size: 11px;
     -fx-text-fill: -text-dim;
     -fx-font-weight: bold;
+    -fx-letter-spacing: 0.06em;
 }
 
 .card-value {
@@ -114,7 +172,7 @@
     -fx-text-fill: -text-dim;
 }
 
-/* ---------------- status pill / LED ---------------- */
+/* ---------------- status LED ---------------- */
 
 .led {
     -fx-fill: -text-dim;
@@ -122,46 +180,62 @@
 
 .led-ok {
     -fx-fill: -ok;
+    -fx-effect: dropshadow(gaussian, -glow-ok, 14, 0.85, 0, 0);
 }
 
 .led-warn {
     -fx-fill: -warn;
+    -fx-effect: dropshadow(gaussian, -glow-warn, 14, 0.85, 0, 0);
 }
 
 .led-err {
     -fx-fill: -err;
+    -fx-effect: dropshadow(gaussian, -glow-err, 14, 0.85, 0, 0);
 }
+
+/* ---------------- pills ---------------- */
 
 .pill {
     -fx-background-radius: 999;
     -fx-padding: 4 12 4 12;
-    -fx-font-size: 12px;
+    -fx-font-size: 11px;
     -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, -shadow, 6, 0.18, 0, 2);
 }
 
 .pill-ok {
-    -fx-background-color: -ok-soft;
+    -fx-background-color: linear-gradient(to right, -ok-soft, rgba(255, 255, 255, 0.02));
     -fx-text-fill: -ok;
+    -fx-border-color: -ok-soft;
+    -fx-border-radius: 999;
 }
 
 .pill-warn {
-    -fx-background-color: -warn-soft;
+    -fx-background-color: linear-gradient(to right, -warn-soft, rgba(255, 255, 255, 0.02));
     -fx-text-fill: -warn;
+    -fx-border-color: -warn-soft;
+    -fx-border-radius: 999;
 }
 
 .pill-err {
-    -fx-background-color: -err-soft;
+    -fx-background-color: linear-gradient(to right, -err-soft, rgba(255, 255, 255, 0.02));
     -fx-text-fill: -err;
+    -fx-border-color: -err-soft;
+    -fx-border-radius: 999;
 }
 
 .pill-neutral {
-    -fx-background-color: -surface-3;
+    -fx-background-color: linear-gradient(to right, -surface-3, -surface-2);
     -fx-text-fill: -text-dim;
+    -fx-border-color: -border;
+    -fx-border-radius: 999;
 }
 
 .pill-accent {
-    -fx-background-color: -accent-soft;
+    -fx-background-color: linear-gradient(to right, -accent-soft, rgba(255, 255, 255, 0.02));
     -fx-text-fill: -accent;
+    -fx-border-color: -accent-soft;
+    -fx-border-radius: 999;
 }
 
 /* ---------------- state ring (client dashboard) ---------------- */
@@ -170,6 +244,7 @@
     -fx-stroke: -surface-3;
     -fx-stroke-width: 10;
     -fx-fill: transparent;
+    -fx-effect: dropshadow(gaussian, -shadow, 10, 0.25, 0, 4);
 }
 
 .state-ring-progress {
@@ -177,7 +252,7 @@
 }
 
 .state-label {
-    -fx-font-size: 16px;
+    -fx-font-size: 17px;
     -fx-font-weight: bold;
     -fx-text-fill: -text;
 }
@@ -187,100 +262,217 @@
     -fx-text-fill: -text-dim;
 }
 
-/* ---------------- buttons ---------------- */
+/* ================================================================
+   BUTTONS — modern glass, hover lift, pressed depth, focus glow
+   ================================================================ */
 
 .button {
-    -fx-background-radius: 10;
+    -fx-background-radius: 12;
     -fx-padding: 10 26 10 26;
-    -fx-font-size: 14px;
+    -fx-font-size: 13px;
     -fx-font-weight: bold;
     -fx-cursor: hand;
     -fx-background-insets: 0;
     -fx-border-width: 1;
-    -fx-border-radius: 10;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, -shadow, 8, 0.2, 0, 3);
+}
+
+.button:disabled {
+    -fx-opacity: 0.45;
 }
 
 .button-primary {
-    -fx-background-color: -accent;
+    -fx-background-color:
+        linear-gradient(to top right, -accent 0%, -accent-2 100%);
     -fx-text-fill: white;
-    -fx-border-color: transparent;
-    -fx-effect: dropshadow(gaussian, rgba(59, 130, 246, 0.35), 14, 0.25, 0, 4);
+    -fx-border-color: -glass-hi;
+    -fx-effect: dropshadow(gaussian, -glow-accent, 16, 0.4, 0, 5);
 }
 
 .button-primary:hover {
-    -fx-background-color: -accent-hover;
+    -fx-background-color:
+        linear-gradient(to top right, -accent-hover 0%, #9180ff 100%);
+    -fx-border-color: -border-hi;
+    -fx-effect: dropshadow(gaussian, -glow-accent, 24, 0.55, 0, 8);
+}
+
+.button-primary:focused {
+    -fx-effect: dropshadow(gaussian, -glow-accent, 22, 0.6, 0, 0);
+}
+
+.button-primary:armed {
+    -fx-background-color:
+        linear-gradient(to top right, derive(-accent, -14%) 0%, derive(-accent-2, -14%) 100%);
+    -fx-effect: innershadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.4, 0, 2);
 }
 
 .button-secondary {
-    -fx-background-color: -surface-3;
+    -fx-background-color:
+        linear-gradient(from 0% 0% to 0% 45%, -glass-hi, rgba(255, 255, 255, 0.00)),
+        -surface-2;
     -fx-text-fill: -text;
     -fx-border-color: -border;
 }
 
 .button-secondary:hover {
-    -fx-background-color: derive(-surface-3, 10%);
+    -fx-background-color:
+        linear-gradient(from 0% 0% to 0% 45%, -glass-hi, rgba(255, 255, 255, 0.02)),
+        -surface-3;
+    -fx-border-color: -border-hi;
+    -fx-effect: dropshadow(gaussian, -shadow, 14, 0.28, 0, 6);
+}
+
+.button-secondary:focused {
+    -fx-border-color: -accent;
+    -fx-effect: dropshadow(gaussian, -glow-accent, 14, 0.45, 0, 0);
+}
+
+.button-secondary:armed {
+    -fx-effect: innershadow(gaussian, rgba(0, 0, 0, 0.35), 10, 0.35, 0, 2);
 }
 
 .button-ghost {
     -fx-background-color: transparent;
     -fx-text-fill: -text-dim;
     -fx-border-color: transparent;
+    -fx-effect: none;
 }
 
 .button-ghost:hover {
+    -fx-background-color: -accent-soft;
     -fx-text-fill: -text;
+    -fx-border-color: transparent;
+}
+
+.button-ghost:armed {
+    -fx-background-color: derive(-accent-soft, 6%);
+}
+
+.button-ghost:focused {
+    -fx-background-color: -accent-soft;
 }
 
 .button-danger {
-    -fx-background-color: -err-soft;
-    -fx-text-fill: -err;
-    -fx-border-color: transparent;
+    -fx-background-color:
+        linear-gradient(to top right, -err 0%, derive(-err, -12%) 100%);
+    -fx-text-fill: white;
+    -fx-border-color: -glass-hi;
+    -fx-effect: dropshadow(gaussian, -glow-err, 16, 0.4, 0, 5);
 }
 
 .button-danger:hover {
-    -fx-background-color: derive(-err-soft, 8%);
+    -fx-background-color:
+        linear-gradient(to top right, derive(-err, 8%) 0%, -err 100%);
+    -fx-effect: dropshadow(gaussian, -glow-err, 24, 0.55, 0, 8);
+}
+
+.button-danger:armed {
+    -fx-background-color: derive(-err, -14%);
+    -fx-effect: innershadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.4, 0, 2);
 }
 
 .button-success {
-    -fx-background-color: -ok;
-    -fx-text-fill: white;
-    -fx-border-color: transparent;
+    -fx-background-color:
+        linear-gradient(to top right, -ok 0%, derive(-ok, -12%) 100%);
+    -fx-text-fill: #04120b;
+    -fx-border-color: -glass-hi;
+    -fx-effect: dropshadow(gaussian, -glow-ok, 16, 0.4, 0, 5);
 }
 
 .button-success:hover {
-    -fx-background-color: derive(-ok, -8%);
+    -fx-background-color:
+        linear-gradient(to top right, derive(-ok, 8%) 0%, -ok 100%);
+    -fx-effect: dropshadow(gaussian, -glow-ok, 24, 0.55, 0, 8);
 }
 
-/* ---------------- forms ---------------- */
+.button-success:armed {
+    -fx-background-color: derive(-ok, -14%);
+    -fx-effect: innershadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.4, 0, 2);
+}
 
-.text-field, .combo-box, .text-area, .password-field {
-    -fx-background-color: -surface-2;
+/* ================================================================
+   FORMS — frosted inputs with focus glow
+   ================================================================ */
+
+.text-field, .password-field, .combo-box, .combo-box .text-field,
+.text-area {
+    -fx-background-color:
+        linear-gradient(from 0% 0% to 0% 40%, -glass-hi, rgba(255, 255, 255, 0.00)),
+        -surface-2;
     -fx-border-color: -border;
-    -fx-border-radius: 8;
-    -fx-background-radius: 8;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
     -fx-padding: 8 12 8 12;
     -fx-text-fill: -text;
     -fx-font-size: 13px;
 }
 
-.text-field:focused, .combo-box:focused, .text-area:focused, .password-field:focused {
+.text-field:hover, .password-field:hover, .combo-box:hover,
+.text-area:hover {
+    -fx-border-color: -border-hi;
+}
+
+.text-field:focused, .password-field:focused, .combo-box:focused,
+.text-area:focused {
     -fx-border-color: -accent;
+    -fx-effect: dropshadow(gaussian, -glow-accent, 12, 0.5, 0, 0);
+}
+
+.text-area .content, .combo-box .list-cell {
+    -fx-background-color: transparent;
+}
+
+.combo-box .arrow-button {
+    -fx-background-color: transparent;
+}
+
+.combo-box .arrow {
+    -fx-background-color: -text-dim;
+}
+
+.combo-box-popup .list-view {
+    -fx-background-color: -surface-solid;
+    -fx-background-radius: 10;
+    -fx-border-color: -border;
+    -fx-border-radius: 10;
+    -fx-effect: dropshadow(gaussian, -shadow, 18, 0.3, 0, 8);
+}
+
+.check-box {
+    -fx-text-fill: -text;
 }
 
 .check-box .box {
-    -fx-background-color: -surface-2;
+    -fx-background-color:
+        linear-gradient(to top right, -surface-3, -surface-2);
     -fx-border-color: -border;
-    -fx-border-radius: 4;
+    -fx-border-radius: 5;
+    -fx-background-radius: 5;
+    -fx-padding: 1;
+}
+
+.check-box:hover .box {
+    -fx-border-color: -border-hi;
+}
+
+.check-box:selected .box {
+    -fx-background-color: linear-gradient(to top right, -accent, -accent-2);
+    -fx-border-color: transparent;
+    -fx-effect: dropshadow(gaussian, -glow-accent, 8, 0.6, 0, 0);
 }
 
 .check-box:selected .mark {
-    -fx-background-color: -accent;
+    -fx-background-color: white;
 }
 
+/* ---------------- form labels ---------------- */
+
 .form-label {
-    -fx-font-size: 12px;
+    -fx-font-size: 11px;
     -fx-text-fill: -text-dim;
     -fx-font-weight: bold;
+    -fx-letter-spacing: 0.04em;
 }
 
 .form-hint {
@@ -288,30 +480,49 @@
     -fx-text-fill: -text-dim;
 }
 
-/* ---------------- tables / lists ---------------- */
+/* ================================================================
+   LISTS / TABLES
+   ================================================================ */
 
 .list-view, .table-view {
     -fx-background-color: -surface-2;
-    -fx-background-radius: 10;
+    -fx-background-radius: 12;
     -fx-border-color: -border;
-    -fx-border-radius: 10;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, -shadow, 12, 0.18, 0, 4);
 }
 
 .list-cell, .table-cell {
     -fx-background-color: transparent;
     -fx-text-fill: -text;
-    -fx-padding: 8 10 8 10;
+    -fx-padding: 8 12 8 12;
 }
 
 .list-cell:odd {
-    -fx-background-color: derive(-surface-2, -3%);
+    -fx-background-color: rgba(255, 255, 255, 0.03);
 }
 
-/* ---------------- misc ---------------- */
-
-.separator .line {
-    -fx-border-color: -border;
+.list-cell:hover, .list-cell:selected {
+    -fx-background-color: -accent-soft;
 }
+
+.table-view .column-header-background {
+    -fx-background-color: linear-gradient(to right, -surface-3, -surface-2);
+    -fx-background-radius: 12 12 0 0;
+}
+
+.table-view .column-header, .table-view .filler {
+    -fx-background-color: transparent;
+}
+
+.table-view .column-header .label {
+    -fx-text-fill: -text-dim;
+    -fx-font-weight: bold;
+}
+
+/* ================================================================
+   SCROLL BARS — slim glass
+   ================================================================ */
 
 .scroll-pane {
     -fx-background-color: transparent;
@@ -322,21 +533,156 @@
     -fx-background-color: transparent;
 }
 
-.log-view {
-    -fx-font-family: "Cascadia Mono", "Consolas", monospace;
-    -fx-font-size: 11px;
-    -fx-text-fill: -text-dim;
-    -fx-background-color: -surface-2;
+.scroll-bar {
+    -fx-background-color: transparent;
 }
 
+.scroll-bar .thumb {
+    -fx-background-color: -surface-3;
+    -fx-background-radius: 999;
+    -fx-background-insets: 2;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: derive(-surface-3, 12%);
+}
+
+.scroll-bar .track {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .increment-button, .scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+/* ================================================================
+   TABS — glass wells with gradient underline
+   ================================================================ */
+
 .tab-pane .tab-header-background {
-    -fx-background-color: -surface;
+    -fx-background-color: transparent;
+}
+
+.tab-pane > .tab-header-area > .tab-header-background {
+    -fx-padding: 8 12 0 12;
 }
 
 .tab {
     -fx-background-color: transparent;
+    -fx-background-radius: 10 10 0 0;
+    -fx-padding: 8 18 8 18;
+    -fx-background-insets: 0;
+}
+
+.tab:hover {
+    -fx-background-color: -surface-2;
+}
+
+.tab .tab-label {
+    -fx-text-fill: -text-dim;
+    -fx-font-weight: bold;
+    -fx-font-size: 12px;
+}
+
+.tab:selected {
+    -fx-background-color:
+        linear-gradient(to top, -accent-soft, rgba(255, 255, 255, 0.02)),
+        -surface-2;
 }
 
 .tab:selected .tab-label {
-    -fx-text-fill: -accent;
+    -fx-text-fill: -text;
+}
+
+.tab:selected .focus-indicator {
+    -fx-border-color: transparent -border -accent -border;
+    -fx-border-width: 0 0 2 0;
+    -fx-border-radius: 0 0 2 2;
+}
+
+.tab-pane > .tab-content-area {
+    -fx-background-radius: 0 0 14 14;
+}
+
+/* ================================================================
+   DIALOGS / ALERTS / TOOLTIPS
+   ================================================================ */
+
+.dialog-pane {
+    -fx-background-color: linear-gradient(to top right, -bg-0, -bg-1);
+    -fx-background-radius: 16;
+    -fx-border-color: -border;
+    -fx-border-radius: 16;
+    -fx-effect: dropshadow(gaussian, -shadow, 34, 0.4, 0, 12);
+}
+
+.dialog-pane > .content.label {
+    -fx-text-fill: -text;
+    -fx-font-size: 13px;
+}
+
+.dialog-pane .header-panel {
+    -fx-background-color: transparent;
+}
+
+.dialog-pane .header-panel .label {
+    -fx-text-fill: -text;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.dialog-pane .button-bar .container {
+    -fx-background-color: transparent;
+}
+
+.tooltip {
+    -fx-background-color: rgba(12, 17, 28, 0.92);
+    -fx-background-radius: 8;
+    -fx-border-color: -border-hi;
+    -fx-border-radius: 8;
+    -fx-text-fill: -text;
+    -fx-font-size: 11px;
+    -fx-padding: 6 10 6 10;
+    -fx-effect: dropshadow(gaussian, -shadow, 10, 0.3, 0, 4);
+}
+
+.tooltip *.text {
+    -fx-fill: -text;
+}
+
+/* ================================================================
+   MISC
+   ================================================================ */
+
+.separator .line {
+    -fx-border-color: -border;
+}
+
+.log-view {
+    -fx-font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -text-dim;
+    -fx-background-color:
+        linear-gradient(from 0% 0% to 0% 100%, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.05)),
+        -surface-2;
+}
+
+.log-view:focused {
+    -fx-effect: none;
+}
+
+.split-pane > .split-pane-divider {
+    -fx-background-color: -border;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: linear-gradient(to right, -accent, -accent-2);
+    -fx-background-radius: 999;
+    -fx-background-insets: 0;
+}
+
+.progress-bar > .track {
+    -fx-background-color: -surface-2;
+    -fx-background-radius: 999;
 }

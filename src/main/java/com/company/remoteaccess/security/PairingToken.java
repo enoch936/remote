@@ -53,8 +53,64 @@ public record PairingToken(
                 || token == null || token.isEmpty()) {
             throw new IllegalArgumentException("pairing payload is missing fields");
         }
-        return new PairingToken(serverName, host, Integer.parseInt(port), pub,
-                client == null ? "" : client, token);
+        int listenPort = Integer.parseInt(port);
+        if (listenPort < 1 || listenPort > 65535) {
+            throw new IllegalArgumentException("pairing payload port is out of range");
+        }
+        if (!isWireGuardKey(pub)) {
+            throw new IllegalArgumentException("pairing payload server key is not a WireGuard public key");
+        }
+        if (!isIpv4(client)) {
+            throw new IllegalArgumentException("pairing payload address is not a valid IPv4 address");
+        }
+        return new PairingToken(serverName, host, listenPort, pub, client, token);
+    }
+
+    /** WireGuard base64 keys are exactly 44 characters (32 raw bytes, "=" padded). */
+    private static boolean isWireGuardKey(String value) {
+        if (value == null || value.length() != 44) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '+') {
+                continue;
+            }
+            if (c == '/' && i < 42) {
+                continue;
+            }
+            if (c == '=' && (i == 42 || i == 43)) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean isIpv4(String value) {
+        if (value == null || value.isBlank()) {
+            return true; // empty client address is tolerated, it is optional
+        }
+        String[] parts = value.split("\\.", -1);
+        if (parts.length != 4) {
+            return false;
+        }
+        for (String p : parts) {
+            if (p.isEmpty() || p.length() > 3 || !p.chars().allMatch(Character::isDigit)) {
+                return false;
+            }
+            int n;
+            try {
+                n = Integer.parseInt(p);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+            if (n < 0 || n > 255) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Server-side hash of the one-time token (we never store plaintext tokens). */

@@ -11,7 +11,9 @@ import com.company.remoteaccess.networking.NatManager;
 import com.company.remoteaccess.networking.NetworkManager;
 import com.company.remoteaccess.networking.RoutingManager;
 import com.company.remoteaccess.platform.CommandRunner;
+import com.company.remoteaccess.security.ConfigCipher;
 import com.company.remoteaccess.security.CredentialStore;
+import com.company.remoteaccess.security.ConfigIntegrity;
 import com.company.remoteaccess.security.Secrets;
 import com.company.remoteaccess.vpn.KeyManager;
 import com.company.remoteaccess.vpn.VpnException;
@@ -58,9 +60,10 @@ public final class AppContext {
         }
         this.runner = new CommandRunner();
         this.network = new NetworkManager(runner, Duration.ofMillis(3000));
-        this.configManager = new ConfigManager(configFile);
         this.credentials = new CredentialStore(credentialsDir);
         this.credentials.initialize();
+        this.configManager = new ConfigManager(configFile,
+                ConfigIntegrity.keyFor(credentials), ConfigCipher.keyFor(credentials));
     }
 
     /** Load persisted configuration (never secrets) or create a default. */
@@ -81,6 +84,11 @@ public final class AppContext {
     public void updateConfig(AppConfig cfg) throws IOException {
         config.set(cfg);
         configManager.save(cfg);
+    }
+
+    /** Replace the in-memory config without writing the file (startup fallback). */
+    public void overrideConfig(AppConfig cfg) {
+        config.set(cfg);
     }
 
     public void configureLogging() {

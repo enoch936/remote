@@ -3,8 +3,10 @@ package com.company.remoteaccess.ui;
 import com.company.remoteaccess.BuildInfo;
 import com.company.remoteaccess.MainApp;
 import com.company.remoteaccess.core.state.Role;
+import com.company.remoteaccess.ui.components.AuroraBackground;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.layout.BorderPane;
@@ -19,6 +21,7 @@ import javafx.scene.layout.VBox;
 public final class MainView {
 
     private final MainApp app;
+    private final StackPane shell = new StackPane();
     private final BorderPane root = new BorderPane();
     private final StackPane content = new StackPane();
     private final Label footerStatus = new Label("");
@@ -28,21 +31,21 @@ public final class MainView {
 
     public MainView(MainApp app) {
         this.app = app;
-        root.getStyleClass().add("root");
-        root.getStyleClass().add("dark");
+        shell.getStyleClass().addAll("root", "dark");
+        shell.getChildren().addAll(new AuroraBackground(), root);
+        root.getStyleClass().add("app-shell");
         root.setTop(buildHeader());
         root.setCenter(content);
         root.setBottom(buildFooter());
     }
 
-    public BorderPane root() {
-        return root;
+    public Parent root() {
+        return shell;
     }
 
     public void applyTheme(String theme) {
-        root.getStyleClass().remove("dark");
-        root.getStyleClass().remove("light");
-        root.getStyleClass().add("light".equalsIgnoreCase(theme) ? "light" : "dark");
+        shell.getStyleClass().removeAll("dark", "light");
+        shell.getStyleClass().add("light".equalsIgnoreCase(theme) ? "light" : "dark");
     }
 
     private Node buildHeader() {
@@ -59,10 +62,15 @@ public final class MainView {
         settings.setMaxWidth(Double.MAX_VALUE);
         settings.setOnAction(e -> showSettings());
 
+        Button home = new Button("Home");
+        home.getStyleClass().add("button-secondary");
+        home.setMaxWidth(Double.MAX_VALUE);
+        home.setOnAction(e -> showDashboard());
+
         Button themeToggle = new Button("Theme");
         themeToggle.getStyleClass().add("button-ghost");
         themeToggle.setOnAction(e -> {
-            boolean light = root.getStyleClass().contains("light");
+            boolean light = shell.getStyleClass().contains("light");
             String next = light ? "dark" : "light";
             app.applyTheme(next);
             try {
@@ -72,14 +80,14 @@ public final class MainView {
             }
         });
 
-        HBox right = Ui.hbox(8, rolePill, themeToggle, settings);
+        HBox right = Ui.hbox(8, home, rolePill, themeToggle, settings);
         right.setAlignment(Pos.CENTER_RIGHT);
 
         HBox header = new HBox(12);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("header-bar");
         HBox trailing = new HBox();
-        trailing.setStyle("-fx-alignment: center-right;");
+        trailing.setAlignment(Pos.CENTER_RIGHT);
         HBox.setHgrow(trailing, javafx.scene.layout.Priority.ALWAYS);
         header.getChildren().addAll(titles, trailing, right);
         return header;
@@ -89,7 +97,7 @@ public final class MainView {
         Label left = Ui.label(BuildInfo.versionLabel() + "  \u00b7  "
                 + "Files stored under ~/.company-remote", "form-hint");
         footerStatus.setText("ready");
-        footerStatus.setStyle("-fx-alignment: center-right;");
+        footerStatus.setAlignment(Pos.CENTER_RIGHT);
         HBox footer = new HBox();
         footer.setAlignment(Pos.CENTER_LEFT);
         footer.getStyleClass().add("footer-bar");
@@ -124,12 +132,13 @@ public final class MainView {
 
     private void setContent(Node node) {
         if (currentPage != null) {
-            content.getChildren().remove(currentPage);
+            content.getChildren().clear();
         }
         currentPage = node;
         if (currentPage != null) {
-            Ui.fadeIn(currentPage, 0.25);
+            Ui.enhance(currentPage);
             content.getChildren().setAll(currentPage);
+            Ui.enter(currentPage);
         }
     }
 

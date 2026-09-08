@@ -13,6 +13,7 @@ import com.company.remoteaccess.networking.NetworkException;
 import com.company.remoteaccess.networking.RoutePlan;
 import com.company.remoteaccess.networking.RoutingManager;
 import com.company.remoteaccess.security.CredentialStore;
+import com.company.remoteaccess.security.Validation;
 
 import java.io.IOException;
 import java.util.List;
@@ -33,6 +34,8 @@ public final class VpnManager {
     private final FirewallManager firewall;
     private final NatManager nat;
     private final KeyManager keyManager;
+
+    private volatile boolean natManaged;
 
     public VpnManager(VpnAdapter adapter,
                       Supplier<AppConfig> config,
@@ -142,7 +145,7 @@ public final class VpnManager {
                     .action(FirewallRule.Action.ALLOW)
                     .build());
         } catch (NetworkException e) {
-            throw new VpnException(VpnException.Kind.PERMISSION_REQUIRED,
+            throw new VpnException(VpnException.Kind.FIREWALL_CONFIGURATION,
                     "Firewall rule not applied: " + e.getMessage());
         }
 
@@ -154,24 +157,52 @@ public final class VpnManager {
         return adapter.status(tunnel);
     }
 
-    /** Apply or refresh NAT for full-tunnel mode; report missing admin action. */
+    /** Configure - then verify - NAT for full-tunnel mode. */
     public void applyGatewayNat(AppConfig cfg, String lanInterface, String lanCidr) throws VpnException {
-        try {
-            String vpnSubnetCidr = cfg.vpnSubnet();
-            if (lanCidr == null || lanCidr.isBlank()) {
-                throw new NetworkException(NetworkException.Kind.NOT_CONFIGURED,
-                        "company LAN subnet is not configured; NAT cannot be set up");
-            }
-            List<String> actions = nat.missingRequirements(vpnSubnetCidr, lanInterface);
-            if (!actions.isEmpty() && !nat.isEnabled()) {
-                // do not silently fail: surface the required administrator action
-                throw new VpnException(VpnException.Kind.PERMISSION_REQUIRED,
-                        "Full-tunnel NAT requires configuration: " + String.join("; ", actions));
-            }
-            nat.enableNat(vpnSubnetCidr, lanInterface, lanCidr);
-        } catch (NetworkException e) {
-            AppLogger.getLogger().warn(LogCategory.FIREWALL, "NAT setup: %s", e.getMessage());
+        String vpnSubnetCidr = cfg.vpnSubnet();
+        if (lanCidr == null || lanCidr.isBlank()) {
+            throw new VpnException(VpnException.Kind.NAT_CONFIGURATION,
+                    "company LAN subnet is not configured; NAT cannot be set up. "
+                            + "Set the LAN subnet in server setup or switch to split tunneling.");
         }
+        // Configure first. The old code checked missingRequirements and bailed
+        // before applying anything, so full-tunnel servers could never configure
+        // their own NAT on first boot.
+        try {
+            nat.enableNat(vpnSubnetCidr, lanInterface, lanCidr);
+            natManaged = true;
+        } catch (NetworkException e) {
+            throw new VpnException(VpnException.Kind.NAT_CONFIGURATION,
+                    "Full-tunnel NAT could not be enabled: " + e.getMessage(), e);
+        }
+        // Then verify: if the rules this app is responsible for are absent, we
+        // did not go ONLINE - the state is reported as a real failure.
+        NatManager.NatResult verified = nat.verifyNat(vpnSubnetCidr, lanInterface);
+        if (verified.state() == NatManager.State.NOT_ENABLED
+                || verified.state() == NatManager.State.ERROR) {
+            throw new VpnException(VpnException.Kind.NAT_CONFIGURATION, verified.summary());
+        }
+        if (verified.state() == NatManager.State.PARTIAL) {
+            AppLogger.getLogger().warn(LogCategory.FIREWALL,
+                    "NAT partially verified: %s", verified.summary());
+            return;
+        }
+        AppLogger.getLogger().info(LogCategory.FIREWALL, "NAT verified: %s", verified.summary());
+    }
+
+    /** Remove the NAT state this gateway applied (reverse of applyGatewayNat). */
+    public void removeAllManagedNat() {
+        if (!natManaged || nat == null) {
+            return;
+        }
+        AppConfig cfg = config.get();
+        try {
+            nat.disableNat(cfg.vpnSubnet(), cfg.lanInterface(), cfg.lanCidr());
+        } catch (NetworkException e) {
+            AppLogger.getLogger().warn(LogCategory.FIREWALL,
+                    "NAT cleanup skipped (may require elevation on next start): %s", e.getMessage());
+        }
+        natManaged = false;
     }
 
     // ------------------------------------------------------------------
@@ -192,6 +223,13 @@ public final class VpnManager {
         String endpoint = serverEndpoint.contains(":")
                 ? serverEndpoint
                 : serverEndpoint + ":" + cfg.listenPort();
+        try {
+            Validation.requireWireGuardKey(serverPublicKey, "server public key");
+            Validation.requireEndpoint(endpoint, "gateway endpoint");
+        } catch (IllegalArgumentException e) {
+            throw new VpnException(VpnException.Kind.CONFIGURATION_ERROR,
+                    "invalid gateway configuration: " + e.getMessage());
+        }
 
         WgConfigBuilder builder = new WgConfigBuilder()
                 .interfaceKeys(keys.privateKey(), clientVpnIp)
@@ -242,6 +280,15 @@ public final class VpnManager {
             routing.undoAllManaged();
         } catch (NetworkException e) {
             AppLogger.getLogger().warn(LogCategory.ROUTING, "cleanup: %s", e.getMessage());
+        }
+    }
+
+    /** Remove every firewall rule this application created (reverse of applyRule). */
+    public void removeAllManagedFirewall() {
+        try {
+            firewall.removeAllManaged();
+        } catch (Exception e) {
+            AppLogger.getLogger().warn(LogCategory.FIREWALL, "firewall cleanup: %s", e.getMessage());
         }
     }
 

@@ -15,6 +15,8 @@ import com.company.remoteaccess.networking.RoutePlan;
 import com.company.remoteaccess.networking.RoutingManager;
 import com.company.remoteaccess.security.CredentialStore;
 import com.company.remoteaccess.security.PairingToken;
+import com.company.remoteaccess.security.Secrets;
+import com.company.remoteaccess.vpn.KeyManager;
 import com.company.remoteaccess.vpn.VpnException;
 import com.company.remoteaccess.vpn.VpnManager;
 import com.company.remoteaccess.vpn.VpnStatus;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -55,6 +58,7 @@ public final class ClientService {
 
     private volatile Instant connectedAt;
     private volatile Instant disconnectedAt;
+    private volatile boolean tunnelActive;
     private final AtomicReference<ConnectionReport> lastReport = new AtomicReference<>();
     private final AtomicReference<String> lastFailure = new AtomicReference<>();
     private RoutePlan lastPlan;
@@ -91,6 +95,36 @@ public final class ClientService {
     }
 
     /**
+     * Record the SHA-256 pin of this device's WireGuard public key at pairing.
+     * Verifying the pin on every connect detects swapped or replaced key material.
+     */
+    public static String keyFingerprint(String wireGuardPublicKey) {
+        if (wireGuardPublicKey == null || wireGuardPublicKey.isBlank()) {
+            throw new IllegalArgumentException("device public key is empty");
+        }
+        return Secrets.hash256(wireGuardPublicKey);
+    }
+
+    /**
+     * Verify the stored pin against the current public key. A blank stored pin
+     * (pre-upgrade pairing) is accepted as legacy and skips verification.
+     */
+    public static boolean verifyKeyPin(String storedPin, String currentPublicKey) {
+        if (storedPin == null || storedPin.isBlank()) {
+            return true;
+        }
+        if (currentPublicKey == null || currentPublicKey.isBlank()) {
+            return false;
+        }
+        return Secrets.constantEquals(storedPin, keyFingerprint(currentPublicKey));
+    }
+
+    /** True once this device has been paired, by persisted configuration. */
+    public boolean pairApplied() {
+        return config.get().clientPairApplied();
+    }
+
+    /**
      * Complete pairing with the data received from the gateway (QR or manual).
      * Stores the pinned server public key and the server-assigned client address.
      */
@@ -98,7 +132,8 @@ public final class ClientService {
         if (token == null || token.oneTimeToken() == null || token.oneTimeToken().isBlank()) {
             throw new IllegalArgumentException("pairing payload is missing the verification token");
         }
-        requireVpn().ensureClientKeys(); // generate/store our keys first
+        KeyManager.KeyPair ownKeys = requireVpn().ensureClientKeys(); // generate/store our keys first
+        String clientPublic = ownKeys.publicKey();
         credentials.put(SERVER_PUB_KEY_CRED, token.serverPublicKey());
         String endpoint = token.serverHost() + ":" + token.listenPort();
         AppConfig cfg = config.get();
@@ -106,6 +141,7 @@ public final class ClientService {
                 .with("client.serverEndpoint", endpoint)
                 .with("client.vpnIp", token.assignedClientAddress())
                 .with("server.name", token.serverName())
+                .with("client.pubKeyHash", keyFingerprint(clientPublic))
                 .with("client.pairApplied", true);
         configManager.save(cfg);
         AppLogger.getLogger().info(LogCategory.AUTH,
@@ -153,6 +189,7 @@ public final class ClientService {
             return;
         }
         lastFailure.set(null);
+        tunnelActive = false;
         transition(ConnectionState.INITIALIZING);
         try {
             VpnManager vpn = requireVpn();
@@ -183,7 +220,12 @@ public final class ClientService {
             }
 
             transition(ConnectionState.AUTHENTICATING);
-            vpn.ensureClientKeys(); // establish our unique identity
+            KeyManager.KeyPair ownKeys = vpn.ensureClientKeys(); // establish our unique identity
+            if (!verifyKeyPin(cfg.clientPubKeyHash(), ownKeys.publicKey())) {
+                fail(ConnectionState.AUTH_FAILED,
+                        "The device VPN key changed since pairing; re-pair this device.");
+                return;
+            }
 
             transition(ConnectionState.CONNECTING);
             IpHelpers.Cidr vpnSubnet = IpHelpers.parseCidr(cfg.vpnSubnet());
@@ -208,6 +250,7 @@ public final class ClientService {
                     "tunnel allowed IPs: %s", String.join(", ", allowedIps));
             VpnStatus status = vpn.startClient(serverPub.get(), myIp + "/32",
                     allowedIps, cfg.clientDnsOverride());
+            tunnelActive = true;
 
             transition(ConnectionState.CONFIGURING);
             lastPlan = buildRoutePlan(cfg, gatewayIp, fullTunnel, endpoint);
@@ -225,6 +268,7 @@ public final class ClientService {
                     cfg.lanCidr(), fullTunnel, probe);
             lastReport.set(report);
             if (report.anyFailed()) {
+                rollbackAfterFailure();
                 fail(ConnectionState.VPN_FAILED,
                         "Tunnel verification failed: " + failedNames(report));
                 return;
@@ -236,14 +280,18 @@ public final class ClientService {
             AppLogger.getLogger().info(LogCategory.CLIENT,
                     "connected to %s (ip %s)", cfg.serverName(), myIp);
         } catch (VpnException e) {
+            rollbackAfterFailure();
             fail(mapVpnFailure(e), e.getMessage());
         } catch (NetworkException e) {
+            rollbackAfterFailure();
             fail(e.kind() == NetworkException.Kind.PERMISSION_REQUIRED
                     ? ConnectionState.PERMISSION_REQUIRED : ConnectionState.VPN_FAILED,
                     e.getMessage());
         } catch (IOException e) {
+            rollbackAfterFailure();
             fail(ConnectionState.ERROR, "Credential store error: " + e.getMessage());
         } catch (Exception e) {
+            rollbackAfterFailure();
             AppLogger.getLogger().error(LogCategory.CLIENT, e, "connect failed");
             fail(ConnectionState.ERROR, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
@@ -295,9 +343,53 @@ public final class ClientService {
         } catch (Exception e) {
             AppLogger.getLogger().error(LogCategory.CLIENT, e, "disconnect cleanup failed");
         } finally {
+            tunnelActive = false;
             connectedAt = null;
             disconnectedAt = Instant.now();
             transition(ConnectionState.OFFLINE);
+        }
+    }
+
+    /** Tear down a tunnel that came up but never verified, so no state is left behind. */
+    private void rollbackAfterFailure() {
+        if (!tunnelActive) {
+            return;
+        }
+        tunnelActive = false;
+        AppLogger.getLogger().warn(LogCategory.CLIENT,
+                "rolling back tunnel and routes after failed connect");
+        try {
+            if (vpn != null) {
+                vpn.stopTunnel();
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            if (routing != null) {
+                if (lastPlan != null) {
+                    routing.undoPlan(lastPlan);
+                    lastPlan = null;
+                }
+                routing.undoAllManaged();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * Stop accepting new work and block (bounded) until pending connect/disconnect
+     * cleanup has finished, so application shutdown never leaves the tunnel, routes
+     * or NAT behind.
+     */
+    public void close() {
+        disconnect();
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(6, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

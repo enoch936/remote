@@ -2,17 +2,27 @@ package com.company.remoteaccess;
 
 import com.company.remoteaccess.client.ClientService;
 import com.company.remoteaccess.client.ReconnectManager;
+import com.company.remoteaccess.core.state.ConnectionState;
 import com.company.remoteaccess.client.TunnelTester;
 import com.company.remoteaccess.core.configuration.AppConfig;
+import com.company.remoteaccess.core.configuration.ConfigException;
 import com.company.remoteaccess.core.state.Role;
 import com.company.remoteaccess.logging.AppLogger;
 import com.company.remoteaccess.logging.LogCategory;
+import com.company.remoteaccess.platform.CommandResult;
+import com.company.remoteaccess.platform.DataDirs;
+import com.company.remoteaccess.platform.DependencyInstaller;
+import com.company.remoteaccess.platform.Elevation;
+import com.company.remoteaccess.platform.RequirementChecker;
+import com.company.remoteaccess.security.AuditLog;
+import com.company.remoteaccess.security.PairingManager;
 import com.company.remoteaccess.server.ClientRegistry;
 import com.company.remoteaccess.server.GatewayService;
 import com.company.remoteaccess.server.HealthMonitor;
 import com.company.remoteaccess.ui.AppTray;
 import com.company.remoteaccess.ui.MainView;
 import com.company.remoteaccess.ui.setup.SetupWizard;
+import com.company.remoteaccess.vpn.KeyManager;
 import com.company.remoteaccess.vpn.VpnManager;
 import com.company.remoteaccess.vpn.VpnStatus;
 import javafx.application.Application;
@@ -22,6 +32,7 @@ import javafx.stage.Stage;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.function.Supplier;
 
 /**
@@ -40,13 +51,16 @@ public final class MainApp extends Application {
     private ClientRegistry clientRegistry;
     private HealthMonitor healthMonitor;
     private GatewayService gatewayService;
+    private PairingManager pairingManager;
+    private AuditLog auditLog;
 
     private volatile boolean serverStarted;
 
     @Override
     public void start(Stage stage) {
-        Path base = Path.of(System.getProperty("user.home"), ".company-remote");
+        Path base = DataDirs.resolveBaseDir();
         try {
+            migrateLegacyData(base);
             ctx = new AppContext(base);
         } catch (IOException e) {
             AppLogger.getLogger().error(LogCategory.SYSTEM, e,
@@ -55,8 +69,37 @@ public final class MainApp extends Application {
             return;
         }
         ctx.configureLogging();
-        AppConfig cfg = ctx.loadConfig();
+        AppConfig cfg;
+        try {
+            cfg = ctx.loadConfig();
+        } catch (ConfigException e) {
+            if (e.kind() == ConfigException.Kind.STALE
+                    || e.kind() == ConfigException.Kind.NEWER_VERSION) {
+                AppLogger.getLogger().error(LogCategory.SYSTEM, e,
+                        "configuration could not be loaded: %s", e.getMessage());
+                showFatal("The application configuration could not be loaded.\n\n"
+                        + e.getMessage()
+                        + "\n\nRestore it from the *.bak file or reset the configuration.");
+                return;
+            }
+            // Invalid/unparseable seat config (e.g. a reset that left a blank client
+            // config behind): run the first-run role wizard instead of dying. The
+            // file is left untouched until the wizard writes a fresh valid config.
+            AppLogger.getLogger().error(LogCategory.SYSTEM, e,
+                    "configuration unusable; falling back to the first-run wizard: %s",
+                    e.getMessage());
+            cfg = AppConfig.create();
+            ctx.overrideConfig(cfg);
+        }
         role = cfg.mode();
+
+        // An instance launched elevated (auto-elevate relaunch) announces itself so the
+        // previous instance closes only once a real elevated window is on screen.
+        if (Elevation.isElevated()) {
+            Elevation.markStarted();
+        }
+
+        logStartupRequirements(cfg);
 
         configureServices(cfg);
 
@@ -84,20 +127,99 @@ public final class MainApp extends Application {
             mainView.showDashboard();
             startBackgroundServices();
         }
+
+        if (getParameters().getRaw().stream().anyMatch("--fix-requirements"::equals)) {
+            applyDependencyFix();
+        }
     }
 
     private boolean isConfigured(AppConfig cfg) {
-        if (ctx.configManager.exists()) {
-            return true;
+        boolean clientReady = cfg.mode() == Role.CLIENT
+                && cfg.clientPairApplied() && !cfg.clientServerEndpoint().isBlank();
+        return AppConfig.isSetupComplete(cfg, clientReady, serverKeysPresent());
+    }
+
+    /** A gateway that generated its WireGuard keys counts as a set-up server seat. */
+    private boolean serverKeysPresent() {
+        try {
+            return ctx.credentials.has("server");
+        } catch (IOException e) {
+            AppLogger.getLogger().warn(LogCategory.SYSTEM,
+                    "credential store not readable while deciding setup state: %s", e.getMessage());
+            return false;
         }
-        if (cfg.mode() == Role.CLIENT) {
-            try {
-                return clientService != null && clientService.isRegistered();
-            } catch (IOException e) {
-                return false;
+    }
+
+    /**
+     * Start from scratch: wipe config (incl. sidecar + backup), credentials and
+     * runtime data, then re-open the first-run role chooser in place.
+     */
+    public void resetToFirstRun() {
+        try {
+            wipeState();
+            ctx.reloadConfig();
+            configureServices(ctx.config());
+            mainView.showDashboard();
+            showSetupWizard();
+            if (tray != null) {
+                tray.refresh();
+            }
+        } catch (Exception e) {
+            AppLogger.getLogger().error(LogCategory.SYSTEM, e,
+                    "factory reset failed: %s", e.getMessage());
+        }
+    }
+
+    private void wipeState() throws IOException {
+        java.nio.file.Files.deleteIfExists(ctx.configFile);
+        java.nio.file.Files.deleteIfExists(com.company.remoteaccess.security.ConfigIntegrity.sidecarFor(ctx.configFile));
+        java.nio.file.Files.deleteIfExists(ctx.configFile.resolveSibling(ctx.configFile.getFileName() + ".bak"));
+        String integrityFile = com.company.remoteaccess.security.ConfigIntegrity.KEY_CRED + ".secret";
+        for (Path dir : java.util.List.of(ctx.credentialsDir, ctx.dataDir)) {
+            if (!java.nio.file.Files.isDirectory(dir)) {
+                continue;
+            }
+            try (var stream = java.nio.file.Files.list(dir)) {
+                for (Path p : stream.toList()) {
+                    if (dir == ctx.credentialsDir && integrityFile.equals(p.getFileName().toString())) {
+                        continue; // keep the HMAC key: the current ConfigManager is keyed to it
+                    }
+                    java.nio.file.Files.deleteIfExists(p);
+                }
             }
         }
-        return false;
+        ctx.credentials.initialize();
+        AppLogger.getLogger().info(LogCategory.SYSTEM,
+                "factory reset: configuration, credentials and runtime data cleared");
+    }
+
+    /** One-time move of the legacy ~/.company-remote data to the OS-standard dir. */
+    private void migrateLegacyData(Path base) throws IOException {
+        Path legacy = DataDirs.legacyBaseDir(System.getProperty("user.home"));
+        if (DataDirs.requiresMigration(legacy, base)) {
+            int moved = DataDirs.migrateLegacy(legacy, base);
+            AppLogger.getLogger().info(LogCategory.SYSTEM,
+                    "migrated %d data item(s) from %s", moved, legacy);
+        }
+    }
+
+    private void logStartupRequirements(AppConfig cfg) {
+        try {
+            var requirements = RequirementChecker.survey(ctx.runner, cfg.wgBinaryDir(),
+                    role == Role.SERVER, ctx.configManager.exists());
+            for (var r : requirements) {
+                if (r.status() != RequirementChecker.Status.OK) {
+                    AppLogger.getLogger().warn(LogCategory.SYSTEM,
+                            "startup requirement %s (%s): %s", r.id(), r.status(), r.detail());
+                } else {
+                    AppLogger.getLogger().debug(LogCategory.SYSTEM,
+                            "startup requirement %s: ok", r.id());
+                }
+            }
+        } catch (RuntimeException e) {
+            AppLogger.getLogger().warn(LogCategory.SYSTEM,
+                    "requirement survey failed: %s", e.getMessage());
+        }
     }
 
     /** Build the role-specific services (idempotent; rewired after setup). */
@@ -114,11 +236,13 @@ public final class MainApp extends Application {
                 reconnect.start();
             }
         } else if (role == Role.SERVER) {
-            clientRegistry = new ClientRegistry(ctx.baseDir.resolve("data" + "/devices.json"));
+            auditLog = new AuditLog(ctx.dataDir.resolve("audit.log"));
+            clientRegistry = new ClientRegistry(ctx.dataDir.resolve("devices.json"), auditLog);
             healthMonitor = new HealthMonitor(() -> statusSupplier(), ctx.network::isOnline);
             VpnManager vpn = ctx.vpn();
+            pairingManager = new PairingManager(Duration.ofMinutes(10), auditLog);
             gatewayService = new GatewayService(vpn, ctx.network, healthMonitor, clientRegistry,
-                    ctx.configSupplier());
+                    pairingManager, ctx.configSupplier(), auditLog);
         }
     }
 
@@ -131,6 +255,17 @@ public final class MainApp extends Application {
         if (role == Role.SERVER && gatewayService != null && !serverStarted) {
             serverStarted = true;
             gatewayService.start();
+        } else if (role == Role.CLIENT && clientService != null) {
+            AppConfig cfg = ctx.configSupplier().get();
+            boolean connected = clientService != null && clientService.state() == ConnectionState.CONNECTED;
+            if (cfg.connectOnAppStart() && cfg.clientPairApplied() && !connected) {
+                try {
+                    clientService.connect();
+                } catch (Exception e) {
+                    AppLogger.getLogger().error(LogCategory.CLIENT, e,
+                            "automatic connect skipped: %s", e.getMessage());
+                }
+            }
         }
     }
 
@@ -164,6 +299,16 @@ public final class MainApp extends Application {
 
     public GatewayService gatewayService() {
         return gatewayService;
+    }
+
+    /** Shared server-side pairing manager (also used by the gateway watchdog). */
+    public PairingManager pairingManager() {
+        return pairingManager;
+    }
+
+    /** Server audit trail (tamper-evident action log). Null outside server mode. */
+    public AuditLog auditLog() {
+        return auditLog;
     }
 
     public void applyTheme(String theme) {
@@ -234,6 +379,110 @@ public final class MainApp extends Application {
         });
     }
 
+    /** Relaunch this instance elevated (UAC popup on Windows), then exit. */
+    public void runAsAdministrator() {
+        if (Elevation.isElevated()) {
+            return;
+        }
+        Elevation.clearStartedMarker();
+        if (Elevation.relaunchElevated(java.util.List.of())) {
+            AppLogger.getLogger().info(LogCategory.SYSTEM, "relaunching elevated for gateway operation");
+            awaitElevatedWindow(() -> showFatal(Elevation.requiredHint("manage the gateway")));
+        } else {
+            showFatal(Elevation.requiredHint("manage the gateway"));
+        }
+    }
+
+    /**
+     * Install missing dependencies (WireGuard). Relaunches elevated with
+     * {@code --fix-requirements} when necessary; an already-elevated instance
+     * runs the install directly.
+     */
+    public void installDependencies() {
+        if (!Elevation.isElevated()) {
+            Elevation.clearStartedMarker();
+            if (Elevation.relaunchElevated(java.util.List.of("--fix-requirements"))) {
+                AppLogger.getLogger().info(LogCategory.SYSTEM,
+                        "relaunching elevated to install dependencies");
+                awaitElevatedWindow(() -> showFatal(DependencyInstaller.manualHint()));
+            } else {
+                showFatal(DependencyInstaller.manualHint());
+            }
+            return;
+        }
+        applyDependencyFix();
+    }
+
+    /**
+     * Keep this window alive until the elevated relaunch really appears (marker
+     * written by the elevated instance on startup). If nothing shows up — e.g. the
+     * UAC prompt was dismissed — we stay open and let the caller explain instead of
+     * disappearing.
+     */
+    private void awaitElevatedWindow(Runnable onMissing) {
+        Thread t = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + 30_000;
+            boolean started = false;
+            while (System.currentTimeMillis() < deadline) {
+                if (Elevation.startedMarkerPresent()) {
+                    started = true;
+                    break;
+                }
+                try {
+                    Thread.sleep(400);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+            final boolean ok = started;
+            Platform.runLater(() -> {
+                if (ok) {
+                    shutdown();
+                } else {
+                    onMissing.run();
+                }
+            });
+        }, "await-elevated-window");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Install missing tooling, re-check, and restart the gateway when it now works. */
+    private void applyDependencyFix() {
+        Thread worker = new Thread(() -> {
+            try {
+                var plan = DependencyInstaller.wireGuardInstallPlan(ctx.runner);
+                if (plan.isEmpty()) {
+                    AppLogger.getLogger().warn(LogCategory.SYSTEM,
+                            "no automatic install plan on this platform; %s",
+                            DependencyInstaller.manualHint());
+                } else if (!plan.get().automatic()) {
+                    AppLogger.getLogger().warn(LogCategory.SYSTEM, "%s", plan.get().label());
+                } else {
+                    AppLogger.getLogger().info(LogCategory.SYSTEM,
+                            "installing dependency: %s", plan.get().label());
+                    CommandResult r = ctx.runner.run(plan.get().command(), 180);
+                    if (r.success()) {
+                        AppLogger.getLogger().info(LogCategory.SYSTEM,
+                                "dependency install succeeded: %s", plan.get().label());
+                    } else {
+                        AppLogger.getLogger().warn(LogCategory.SYSTEM,
+                                "dependency install failed (%d): %s", r.exitCode(), r.stderr());
+                    }
+                }
+            } finally {
+                if (KeyManager.findWgBinary(ctx.runner, ctx.config().wgBinaryDir()).isPresent()
+                        && gatewayService != null) {
+                    AppLogger.getLogger().info(LogCategory.SYSTEM,
+                            "WireGuard available after fix; rebooting the gateway");
+                    Platform.runLater(() -> gatewayService.rebootstrap());
+                }
+            }
+        }, "dependency-installer");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
     /** Graceful application shutdown restoring all temporary changes. */
     public void shutdown() {
         AppLogger.getLogger().info(LogCategory.SYSTEM, "application shutdown");
@@ -242,6 +491,7 @@ public final class MainApp extends Application {
         }
         if (clientService != null) {
             clientService.disconnect();
+            clientService.close();
         }
         if (reconnect != null) {
             reconnect.close();

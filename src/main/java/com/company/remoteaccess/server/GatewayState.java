@@ -9,6 +9,8 @@ public enum GatewayState {
     RECOVERING,
     PERMISSION_REQUIRED,
     BINARIES_MISSING,
+    NAT_FAILED,
+    FIREWALL_FAILED,
     ERROR,
     STOPPING;
 

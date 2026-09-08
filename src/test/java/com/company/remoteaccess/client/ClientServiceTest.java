@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientServiceTest {
 
-    private static final String PUB = "SrvrPublicKeySrvrPublicKeySrvrPublicKeySrvrPublic=";
+    private static final String PUB = "S".repeat(43) + "=";
 
     @TempDir
     Path tmp;
@@ -134,6 +134,43 @@ class ClientServiceTest {
         service.completePairing(token, "dev-laptop");
     }
 
+    @Test
+    void pairingRecordsDeviceKeyPin() throws Exception {
+        pairing();
+        assertEquals(ClientService.keyFingerprint(PUB),
+                configManager.load().clientPubKeyHash());
+    }
+
+    @Test
+    void changedDeviceKeyBlocksConnect() throws Exception {
+        pairing();
+        configManager.save(AppConfig.create()
+                .with("mode", "CLIENT")
+                .with("client.serverEndpoint", "gw.example.com:51820")
+                .with("client.vpnIp", "10.50.0.2")
+                .with("client.pairApplied", true)
+                .with("client.deviceName", "dev-laptop")
+                .with("client.pubKeyHash",
+                        ClientService.keyFingerprint("Q".repeat(43) + "=")));
+        service.connect();
+        await(ConnectionState.AUTH_FAILED);
+        assertTrue(service.lastFailureMessage().contains("changed since pairing"),
+                () -> "unexpected: " + service.lastFailureMessage());
+    }
+
+    @Test
+    void legacyPairingWithoutPinConnects() throws Exception {
+        credentials.put(ClientService.SERVER_PUB_KEY_CRED, PUB);
+        configManager.save(AppConfig.create()
+                .with("mode", "CLIENT")
+                .with("client.serverEndpoint", "gw.example.com:51820")
+                .with("client.vpnIp", "10.50.0.2")
+                .with("client.pairApplied", true));
+        service.connect();
+        await(ConnectionState.CONNECTED);
+        assertTrue(service.status().running());
+    }
+
     private ClientService withFailingTester() {
         NetworkManager network = new FakeNetwork();
         ClientService svc = new ClientService(configManager::load, configManager, credentials,
@@ -223,9 +260,7 @@ class ClientServiceTest {
     static class FakeRunner extends CommandRunner {
         @Override
         public CommandResult run(String... command) {
-            return new CommandResult(0,
-                    "wg-private-key-placeholder-placeholder-placeholder-place",
-                    "");
+            return new CommandResult(0, "W".repeat(43) + "=", "");
         }
 
         @Override

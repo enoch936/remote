@@ -27,7 +27,8 @@ public final class HealthMonitor {
                            long rxRateBps,
                            long txRateBps,
                            boolean networkOnline,
-                           boolean vpnHealthy) {
+                           boolean vpnHealthy,
+                           int stalePeers) {
     }
 
     private final Supplier<VpnStatus> vpnStatus;
@@ -44,6 +45,7 @@ public final class HealthMonitor {
     private long prevSampleNanos;
     private volatile long startedAtNanos;
     private volatile boolean started;
+    private volatile Snapshot cached = new Snapshot(0, 0, null, null, 0, 0, 0, 0, 0, 0, false, false, 0);
 
     public HealthMonitor(Supplier<VpnStatus> vpnStatus, BooleanSupplier networkOnline) {
         this.vpnStatus = vpnStatus;
@@ -59,7 +61,7 @@ public final class HealthMonitor {
         int n = reconnectCount.incrementAndGet();
         lastReconnectAt.set(Instant.now().toString());
         if (n > 100) {
-            reconnectCount.set(0);
+            reconnectCount.set(100);
         }
     }
 
@@ -98,18 +100,33 @@ public final class HealthMonitor {
         rxBytes.set(rx);
         txBytes.set(tx);
         long online = 0;
+        long stale = 0;
         if (vpn != null && vpn.running()) {
             for (var p : vpn.peers()) {
                 if (p.handshaken() && p.latestHandshakeSecondsAgo() < 120) {
                     online++;
+                } else if (p.handshaken()) {
+                    stale++;
                 }
             }
         }
         long uptime = started && startedAtNanos != 0
                 ? (System.nanoTime() - startedAtNanos) / 1_000_000_000L : 0L;
-        return new Snapshot(uptime, reconnectCount.get(), lastReconnectAt.get(),
+        Snapshot snapshot = new Snapshot(uptime, reconnectCount.get(), lastReconnectAt.get(),
                 lastError.get(), (int) online, authorizedDevices,
                 rxBytes.get(), txBytes.get(), rxRate.get(), txRate.get(),
-                networkOnline.getAsBoolean(), vpn != null && vpn.running());
+                networkOnline.getAsBoolean(), vpn != null && vpn.running(),
+                (int) stale);
+        cached = snapshot;
+        return snapshot;
+    }
+
+    /**
+     * Returns the last snapshot produced by a background tick. Unlike
+     * {@link #tick(int)} this never touches the VPN supplier, so callers on
+     * the UI thread can read live stats without spawning subprocesses.
+     */
+    public Snapshot cached() {
+        return cached;
     }
 }

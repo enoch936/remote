@@ -3,6 +3,7 @@ package com.company.remoteaccess.core.configuration;
 import com.company.remoteaccess.core.state.Role;
 import com.company.remoteaccess.networking.IpHelpers;
 import com.company.remoteaccess.networking.IpHelpers.Cidr;
+import com.company.remoteaccess.security.Validation;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -99,37 +100,40 @@ public final class ConfigValidator {
             issues.add(new Issue(Issue.Severity.WARNING,
                     "server has no company LAN subnet configured; only the VPN subnet will be routed"));
         }
-        String endpoint = cfg.serverPublicEndpoint();
-        if (endpoint != null && !endpoint.isBlank()) {
-            if (!validEndpoint(endpoint)) {
-                issues.add(new Issue(Issue.Severity.ERROR, "public endpoint is invalid: " + endpoint));
-            }
-        } else if (cfg.serverHost() == null || cfg.serverHost().isBlank()) {
+        if (cfg.serverHost() == null || cfg.serverHost().isBlank()) {
             issues.add(new Issue(Issue.Severity.WARNING,
-                    "no discovery endpoint configured; dynamic address mapping will not work"));
+                    "no server hostname configured; pairing payloads will fall back to gateway.local"));
         }
     }
 
     private static void validateClient(AppConfig cfg, List<Issue> issues) {
-        if (cfg.clientServerEndpoint() == null || cfg.clientServerEndpoint().isBlank()) {
-            issues.add(new Issue(Issue.Severity.ERROR,
-                    "the gateway address is not configured; pair the device first"));
-        } else if (!validEndpoint(cfg.clientServerEndpoint())) {
-            issues.add(new Issue(Issue.Severity.ERROR,
-                    "gateway address is invalid: " + cfg.clientServerEndpoint()));
-        }
-    }
-
-    private static boolean validEndpoint(String endpoint) {
-        String host = endpoint.split(":")[0];
-        if (host.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
-            try {
-                IpHelpers.parseIp(host);
-                return true;
-            } catch (IllegalArgumentException e) {
-                return false;
+        String endpoint = cfg.clientServerEndpoint();
+        if (endpoint == null || endpoint.isBlank()) {
+            // A client that was never paired is a setup-state, not an error: the
+            // first-run wizard is where pairing happens. Keep it as a hard error
+            // only when a pairing was recorded but the address then vanished.
+            if (cfg.clientPairApplied()) {
+                issues.add(new Issue(Issue.Severity.ERROR,
+                        "the gateway address is missing although a pairing was applied; re-pair the device"));
+            } else {
+                issues.add(new Issue(Issue.Severity.WARNING,
+                        "the gateway address is not configured yet; pair the device in the setup wizard"));
             }
+        } else if (!Validation.isValidEndpoint(endpoint)) {
+            issues.add(new Issue(Issue.Severity.ERROR,
+                    "gateway address is invalid: " + endpoint));
         }
-        return host.matches("[A-Za-z0-9.-]+");
+        if (cfg.clientDeviceName() == null || cfg.clientDeviceName().isBlank()) {
+            issues.add(new Issue(Issue.Severity.WARNING,
+                    "device name is not set; it will fall back to the operating system user name"));
+        } else if (!Validation.isValidDeviceName(cfg.clientDeviceName())) {
+            issues.add(new Issue(Issue.Severity.ERROR,
+                    "device name may only be 1-64 characters and may not contain / \\ ; \" ' ` { } < > or |"));
+        }
+        String dns = cfg.clientDnsOverride();
+        if (dns != null && !dns.isBlank() && !Validation.isValidDnsList(dns)) {
+            issues.add(new Issue(Issue.Severity.ERROR,
+                    "client DNS override must be a list of valid IP addresses"));
+        }
     }
 }

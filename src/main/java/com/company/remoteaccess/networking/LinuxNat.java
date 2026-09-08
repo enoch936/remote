@@ -78,6 +78,34 @@ public final class LinuxNat extends NatManager {
         return actions;
     }
 
+    @Override
+    public NatResult verifyNat(String vpnSubnetCidr, String lanInterface) {
+        boolean forwarding;
+        try {
+            CommandResult r = runner.run("sysctl", "-n", "net.ipv4.ip_forward");
+            forwarding = r.success() && "1".equals(r.stdout() == null ? "" : r.stdout().trim());
+        } catch (Exception e) {
+            return NatResult.error("unable to read sysctl net.ipv4.ip_forward: " + e.getMessage());
+        }
+        if (!forwarding) {
+            return NatResult.notEnabled("net.ipv4.ip_forward is not enabled; full-tunnel traffic is not routed",
+                    missingRequirements(vpnSubnetCidr, lanInterface));
+        }
+        CommandResult masq = runner.run("iptables", "-C", "POSTROUTING",
+                "-t", "nat", "-s", vpnSubnetCidr, "-o", lanInterface, "-j", "MASQUERADE");
+        CommandResult forward = runner.run("iptables", "-C", "FORWARD", "-i", "wg+", "-j", "ACCEPT");
+        if (masq.failed()) {
+            return NatResult.notEnabled("MASQUERADE rule missing for " + vpnSubnetCidr + " on " + lanInterface,
+                    java.util.List.of("Run the application as root to create the MASQUERADE rule "
+                            + "(iptables -t nat -A POSTROUTING -s " + vpnSubnetCidr + " -o " + lanInterface + " -j MASQUERADE)."));
+        }
+        if (forward.failed()) {
+            return NatResult.partial("MASQUERADE present but the wg+ FORWARD accept rule is missing",
+                    java.util.List.of("iptables -A FORWARD -i wg+ -j ACCEPT"));
+        }
+        return NatResult.verified("Linux NAT verified: forwarding on, MASQUERADE and FORWARD rules present");
+    }
+
     private void ensureElevated() throws NetworkException {
         if (!Elevation.isElevated()) {
             throw new NetworkException(NetworkException.Kind.PERMISSION_REQUIRED,

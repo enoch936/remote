@@ -33,4 +33,12 @@ public final class BuildInfo {
     public static String versionLabel() {
         return "v" + version();
     }
+
+    public static String vendor() {
+        return PROPS.getProperty("app.vendor", "");
+    }
+
+    public static String copyright() {
+        return PROPS.getProperty("app.copyright", "");
+    }
 }

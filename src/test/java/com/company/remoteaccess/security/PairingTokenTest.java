@@ -24,7 +24,8 @@ class PairingTokenTest {
     @Test
     void encodesSpecialCharacters() {
         PairingToken t = new PairingToken("HQ & main", "gw.example.com", 51820,
-                "k", "10.50.0.2", "token with spaces?");
+                "SERVERPUBKEY12345678901234567890123456789012", "10.50.0.2",
+                "token with spaces?");
         PairingToken back = PairingToken.fromPayload(t.toPayload());
         assertEquals("HQ & main", back.serverName());
         assertEquals("token with spaces?", back.oneTimeToken());
